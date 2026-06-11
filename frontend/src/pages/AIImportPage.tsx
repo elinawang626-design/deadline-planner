@@ -1,49 +1,12 @@
 import { useState } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
-import { USE_MOCK } from '../api/client'
-import { importParsedTasks, type ParsedLlmTask } from '../api/mock'
+import { generatePrompt, importOutput, validateOutput } from '../api/aiimport'
 import { regenerateSchedule } from '../api/schedule'
 import { useUI } from '../store/ui'
 
 const textareaCls =
   'h-40 w-full rounded-md border border-gray-300 p-2 font-mono text-xs focus:border-blue-500 focus:outline-none'
 const btnCls = 'rounded-md border border-gray-300 px-3 py-1.5 text-sm hover:bg-gray-50'
-const labelCls = 'mb-1 block text-sm font-medium'
-
-function buildLocalPrompt(raw: string): string {
-  // TODO(backend): replace with POST /api/ai-import/generate-prompt so the
-  // prompt template and JSON Schema stay identical to the CLI's
-  // `planner generate-prompt`.
-  const tz = Intl.DateTimeFormat().resolvedOptions().timeZone
-  return [
-    'You are a task-parsing assistant for a local scheduling tool.',
-    '',
-    `Current time: ${new Date().toISOString()}`,
-    `Timezone: ${tz}`,
-    '',
-    "## User's raw input",
-    raw,
-    '',
-    '## Your job',
-    'Convert the raw input into ONE JSON object, no prose, no code fences needed:',
-    '{',
-    '  "tasks": [{',
-    '    "id": "stable-id",',
-    '    "title": "...",',
-    '    "deadline": "ISO 8601 with UTC offset",',
-    '    "estimated_hours": <positive integer>,',
-    '    "priority": "high" | "medium" | "low",',
-    '    "earliest_start_at": "optional ISO 8601"',
-    '  }]',
-    '}',
-    'Do NOT produce any calendar blocks; the local tool schedules deterministically.',
-  ].join('\n')
-}
-
-function stripFences(text: string): string {
-  const match = text.trim().match(/^```(?:json)?\s*\n([\s\S]*?)\n?```$/)
-  return (match ? match[1] : text).trim()
-}
 
 export default function AIImportPage() {
   const queryClient = useQueryClient()
@@ -53,75 +16,54 @@ export default function AIImportPage() {
   const [prompt, setPrompt] = useState('')
   const [output, setOutput] = useState('')
   const [errors, setErrors] = useState<string[]>([])
+  const [busy, setBusy] = useState(false)
 
-  const validate = (): ParsedLlmTask[] | null => {
-    // TODO(backend): replace with POST /api/ai-import/validate-output, which
-    // runs the backend's strict Pydantic validation (extra fields rejected).
-    const problems: string[] = []
-    let data: unknown
+  const onGenerate = async () => {
+    setBusy(true)
     try {
-      data = JSON.parse(stripFences(output))
-    } catch {
-      setErrors(['不是合法 JSON（允许纯 JSON 或单个 ```json 围栏块）'])
-      return null
+      setPrompt(await generatePrompt(raw))
+    } catch (error: unknown) {
+      pushToast('error', error instanceof Error ? error.message : '生成提示词失败')
+    } finally {
+      setBusy(false)
     }
-    if (typeof data !== 'object' || data === null || Array.isArray(data)) {
-      problems.push('顶层必须是 JSON 对象')
-    }
-    const tasks = (data as { tasks?: unknown }).tasks
-    if (!Array.isArray(tasks) || tasks.length === 0) {
-      problems.push('缺少非空 tasks 数组')
-    }
-    const parsed: ParsedLlmTask[] = []
-    if (Array.isArray(tasks)) {
-      tasks.forEach((entry, i) => {
-        const item = entry as Record<string, unknown>
-        if (typeof item.title !== 'string' || !item.title) {
-          problems.push(`tasks[${i}].title 缺失`)
-        }
-        if (typeof item.deadline !== 'string' || !/([+-]\d{2}:?\d{2}|Z)$/.test(item.deadline)) {
-          problems.push(`tasks[${i}].deadline 必须是带时区偏移的 ISO 8601`)
-        }
-        if (
-          typeof item.estimated_hours !== 'number' ||
-          item.estimated_hours <= 0 ||
-          !Number.isInteger(item.estimated_hours)
-        ) {
-          problems.push(`tasks[${i}].estimated_hours 必须是正整数`)
-        }
-        if (item.priority !== 'high' && item.priority !== 'medium' && item.priority !== 'low') {
-          problems.push(`tasks[${i}].priority 必须是 high/medium/low`)
-        }
-        if (problems.length === 0) parsed.push(item as unknown as ParsedLlmTask)
-      })
-    }
-    setErrors(problems)
-    if (problems.length) return null
-    pushToast('success', `校验通过：${parsed.length} 个任务`)
-    return parsed
   }
 
-  const importTasks = async () => {
-    const parsed = validate()
-    if (!parsed) return
-    if (!USE_MOCK) {
-      // TODO(backend): POST /api/ai-import/import
-      pushToast('error', '后端 /api/ai-import/import 尚未就绪')
-      return
-    }
-    await importParsedTasks(parsed)
-    setLastSummary(await regenerateSchedule())
-    queryClient.invalidateQueries({ queryKey: ['tasks'] })
-    queryClient.invalidateQueries({ queryKey: ['blocks'] })
-    pushToast('success', `已导入 ${parsed.length} 个任务并重排日程`)
-  }
-
-  const copyPrompt = async () => {
+  const onCopy = async () => {
     try {
       await navigator.clipboard.writeText(prompt)
       pushToast('success', '提示词已复制到剪贴板')
     } catch {
       pushToast('error', '复制失败，请手动选择文本复制')
+    }
+  }
+
+  const onValidate = async () => {
+    setBusy(true)
+    try {
+      const result = await validateOutput(output)
+      setErrors(result.errors)
+      if (result.ok) pushToast('success', `校验通过：${result.count} 个任务`)
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const onImport = async () => {
+    setBusy(true)
+    try {
+      const result = await validateOutput(output)
+      setErrors(result.errors)
+      if (!result.ok) return
+      const imported = await importOutput(output)
+      setLastSummary(await regenerateSchedule())
+      queryClient.invalidateQueries({ queryKey: ['tasks'] })
+      queryClient.invalidateQueries({ queryKey: ['blocks'] })
+      pushToast('success', `已导入 ${imported} 个任务并重排日程`)
+    } catch (error: unknown) {
+      pushToast('error', error instanceof Error ? error.message : '导入失败')
+    } finally {
+      setBusy(false)
     }
   }
 
@@ -134,7 +76,7 @@ export default function AIImportPage() {
       </p>
       <div className="flex flex-col gap-4">
         <div>
-          <label className={labelCls}>① 原始需求（自然语言，随便写）</label>
+          <label className="mb-1 block text-sm font-medium">① 原始需求（自然语言，随便写）</label>
           <textarea
             className={textareaCls}
             value={raw}
@@ -146,26 +88,26 @@ export default function AIImportPage() {
           <div className="mb-1 flex items-center justify-between">
             <label className="text-sm font-medium">② 生成的提示词</label>
             <div className="flex gap-2">
-              <button onClick={() => setPrompt(buildLocalPrompt(raw))} className={btnCls}>
+              <button onClick={() => void onGenerate()} disabled={busy || !raw} className={`${btnCls} disabled:opacity-50`}>
                 生成提示词
               </button>
-              <button onClick={copyPrompt} disabled={!prompt} className={`${btnCls} disabled:opacity-50`}>
+              <button onClick={() => void onCopy()} disabled={!prompt} className={`${btnCls} disabled:opacity-50`}>
                 复制提示词
               </button>
             </div>
           </div>
-          <textarea className={textareaCls} value={prompt} onChange={(e) => setPrompt(e.target.value)} readOnly={false} />
+          <textarea className={textareaCls} value={prompt} onChange={(e) => setPrompt(e.target.value)} />
         </div>
         <div>
           <div className="mb-1 flex items-center justify-between">
             <label className="text-sm font-medium">③ LLM 返回的 JSON</label>
             <div className="flex gap-2">
-              <button onClick={() => validate()} disabled={!output} className={`${btnCls} disabled:opacity-50`}>
+              <button onClick={() => void onValidate()} disabled={busy || !output} className={`${btnCls} disabled:opacity-50`}>
                 校验 JSON
               </button>
               <button
-                onClick={() => void importTasks()}
-                disabled={!output}
+                onClick={() => void onImport()}
+                disabled={busy || !output}
                 className="rounded-md bg-blue-600 px-3 py-1.5 text-sm text-white hover:bg-blue-700 disabled:opacity-50"
               >
                 导入任务

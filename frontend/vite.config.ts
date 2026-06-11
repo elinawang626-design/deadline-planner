@@ -4,4 +4,10 @@ import tailwindcss from '@tailwindcss/vite'
 
 export default defineConfig({
   plugins: [react(), tailwindcss()],
+  server: {
+    proxy: {
+      // dev proxy to the FastAPI backend (planner-server / dev.sh)
+      '/api': 'http://127.0.0.1:8000',
+    },
+  },
 })
