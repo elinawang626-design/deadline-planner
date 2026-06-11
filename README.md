@@ -77,6 +77,19 @@ planner show-week 2026-06-11
 - availability 与偏好窗口不支持跨午夜，需拆成两条规则。
 - deadline 表示任务块必须在该时刻前结束。
 
+## 前端（frontend/）
+
+React + TypeScript + Vite + Tailwind 的本地 Web 界面（无认证、无云同步、不调用任何 LLM API）：
+
+```bash
+cd frontend
+npm install
+npm run dev   # 打开 http://localhost:5173
+```
+
+- 默认运行在 **Mock 数据模式**：数据存于浏览器 localStorage，内置与后端同逻辑的确定性调度器，可直接演示全部功能（新建任务、日/周/月视图、编辑/锁定时间块、重新生成日程、可用时间设置、AI 导入占位页）。
+- 后端 HTTP API 就绪后，创建 `frontend/.env.local` 并设置 `VITE_USE_MOCK=false`（可选 `VITE_API_BASE`），类型化 API client 在 `src/api/` 中，待接入端点以 `TODO(backend)` 注释标出。
+
 ## 测试
 
 ```bash
