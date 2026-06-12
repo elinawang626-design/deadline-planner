@@ -1,10 +1,17 @@
 import { useState } from 'react'
+import { Link } from 'react-router-dom'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { addDays, format, parseISO } from 'date-fns'
 import { deleteTask, updateTask } from '../../api/tasks'
 import { useUI } from '../../store/ui'
-import { PRIORITY_LABELS, STATUS_LABELS, TYPE_LABELS, priorityColor } from '../../lib/labels'
-import type { Priority, ScheduledBlock, Task } from '../../types'
+import {
+  PRIORITY_LABELS,
+  STATUS_LABELS,
+  TYPE_LABELS,
+  fmtMinutes,
+  priorityColor,
+} from '../../lib/labels'
+import type { Priority, ScheduledBlock, Task, TrackingSummary } from '../../types'
 
 type Filter = 'active' | 'completed' | 'archived' | 'overdue' | 'week'
 
@@ -20,9 +27,10 @@ interface TaskListProps {
   tasks: Task[]
   blocks: ScheduledBlock[]
   onEdit: (task: Task) => void
+  tracking?: Record<string, TrackingSummary>
 }
 
-export function TaskList({ tasks, blocks, onEdit }: TaskListProps) {
+export function TaskList({ tasks, blocks, onEdit, tracking = {} }: TaskListProps) {
   const queryClient = useQueryClient()
   const pushToast = useUI((s) => s.pushToast)
   const [filter, setFilter] = useState<Filter>('active')
@@ -76,12 +84,6 @@ export function TaskList({ tasks, blocks, onEdit }: TaskListProps) {
         (sum, b) => sum + (parseISO(b.endAt).getTime() - parseISO(b.startAt).getTime()) / 60_000,
         0,
       )
-
-  const fmtMinutes = (minutes: number) => {
-    const h = Math.floor(minutes / 60)
-    const m = Math.round(minutes % 60)
-    return m ? `${h}h${m}m` : `${h}h`
-  }
 
   return (
     <div>
@@ -142,8 +144,26 @@ export function TaskList({ tasks, blocks, onEdit }: TaskListProps) {
                 {task.earliestStartAt && (
                   <span>最早开始 {format(parseISO(task.earliestStartAt), 'M/d HH:mm')}</span>
                 )}
+                {tracking[task.id] && (
+                  <>
+                    {tracking[task.id].checklistTotal > 0 && (
+                      <span>
+                        检查项 {tracking[task.id].checklistDone}/{tracking[task.id].checklistTotal}
+                      </span>
+                    )}
+                    {tracking[task.id].actualMinutes > 0 && (
+                      <span>实际 {fmtMinutes(tracking[task.id].actualMinutes)}</span>
+                    )}
+                    {tracking[task.id].attachmentCount > 0 && (
+                      <span>附件 {tracking[task.id].attachmentCount}</span>
+                    )}
+                  </>
+                )}
               </div>
               <div className="mt-2 flex flex-wrap gap-2 text-xs">
+                <Link to={`/tasks/${task.id}`} className="font-medium text-blue-600 hover:underline">
+                  详情
+                </Link>
                 <button onClick={() => onEdit(task)} className="text-blue-600 hover:underline">编辑</button>
                 {task.status === 'active' ? (
                   <button

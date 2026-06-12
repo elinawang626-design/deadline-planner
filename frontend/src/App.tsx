@@ -9,6 +9,7 @@ import DayPage from './pages/DayPage'
 import WeekPage from './pages/WeekPage'
 import MonthPage from './pages/MonthPage'
 import TasksPage from './pages/TasksPage'
+import TaskDetailPage from './pages/TaskDetailPage'
 import AvailabilityPage from './pages/AvailabilityPage'
 import AIImportPage from './pages/AIImportPage'
 
@@ -94,6 +95,7 @@ export default function App() {
             <Route path="/week" element={<WeekPage />} />
             <Route path="/month" element={<MonthPage />} />
             <Route path="/tasks" element={<TasksPage />} />
+            <Route path="/tasks/:taskId" element={<TaskDetailPage />} />
             <Route path="/availability" element={<AvailabilityPage />} />
             <Route path="/ai-import" element={<AIImportPage />} />
           </Routes>

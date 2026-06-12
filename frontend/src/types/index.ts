@@ -156,3 +156,104 @@ export interface PlanImportResult {
   rejected: number
   scheduleSummary?: ScheduleSummary | null
 }
+
+// ---- task tracking (checklist / work logs / attachments / estimates / career) ----
+
+export type StorageMode = 'copy' | 'link'
+export type ExtractionStatus = 'ok' | 'failed' | 'unsupported'
+export type Confidence = 'low' | 'medium' | 'high'
+
+export interface ChecklistItem {
+  id: string
+  taskId: string
+  title: string
+  completed: boolean
+  position: number
+  createdAt: string
+}
+
+export interface WorkLog {
+  id: string
+  taskId: string
+  workedAt: string // "YYYY-MM-DD"
+  durationMinutes: number
+  summary: string
+  challenge?: string
+  result?: string
+  createdAt: string
+}
+
+export interface Attachment {
+  id: string
+  taskId: string
+  displayName: string
+  storageMode: StorageMode
+  originalPath?: string
+  storedPath?: string
+  mimeType?: string
+  sizeBytes: number
+  description?: string
+  extractionStatus: ExtractionStatus
+  extractedText?: string
+  createdAt: string
+}
+
+export interface EstimateStep {
+  step: string
+  minutes: number
+}
+
+export interface Estimate {
+  id: string
+  taskId: string
+  optimisticMinutes: number
+  likelyMinutes: number
+  pessimisticMinutes: number
+  confidence: Confidence
+  breakdown: EstimateStep[]
+  assumptions: string[]
+  risks: string[]
+  sourceAttachmentIds: string[]
+  createdAt: string
+  appliedAt?: string | null
+}
+
+export interface ExcerptPreview {
+  attachmentId: string
+  displayName: string
+  snippets: string[]
+}
+
+export interface EstimatePromptResult {
+  prompt: string
+  excerpts: ExcerptPreview[]
+}
+
+export interface ApplyEstimateResult {
+  task: Task
+  estimate: Estimate
+  summary: ScheduleSummary
+}
+
+export interface CareerCard {
+  id: string
+  taskId: string
+  context: string
+  role: string
+  actions: string[]
+  challenges: string[]
+  outcomes: string[]
+  metrics: string[]
+  skills: string[]
+  evidenceAttachmentIds: string[]
+  createdAt: string
+  updatedAt: string
+}
+
+export interface TrackingSummary {
+  taskId: string
+  checklistDone: number
+  checklistTotal: number
+  actualMinutes: number
+  attachmentCount: number
+}

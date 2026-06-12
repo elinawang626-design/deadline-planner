@@ -29,6 +29,13 @@ export const WEEKDAY_LABELS = ['周日', '周一', '周二', '周三', '周四',
 /** Monday-first display order using JS getDay() values. */
 export const WEEKDAY_ORDER = [1, 2, 3, 4, 5, 6, 0]
 
+export function fmtMinutes(minutes: number): string {
+  const h = Math.floor(minutes / 60)
+  const m = Math.round(minutes % 60)
+  if (!h) return `${m}m`
+  return m ? `${h}h${m}m` : `${h}h`
+}
+
 export const priorityColor: Record<Priority, string> = {
   urgent: 'border-red-300 bg-red-50 text-red-800',
   high: 'border-orange-300 bg-orange-50 text-orange-800',

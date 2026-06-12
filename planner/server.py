@@ -9,10 +9,8 @@ Run with: planner-server  (or: python3 -m uvicorn planner.server:app)
 """
 from __future__ import annotations
 
-import os
 import sqlite3
 from datetime import date, datetime
-from pathlib import Path
 from typing import Optional
 
 from fastapi import FastAPI, HTTPException
@@ -83,48 +81,16 @@ class ImportResponse(WebModel):
     scheduleSummary: Optional[ScheduleSummary] = None
 
 
-# ---- storage ----
+# ---- storage (shared helpers in planner.webdb) ----
 
-_TABLES = ["web_tasks", "web_blocks", "web_availability", "web_fixed_events", "web_settings"]
-
-
-def _db_path() -> Path:
-    return Path(os.environ.get("PLANNER_DB", ".planner/planner.db"))
-
-
-def _connect() -> sqlite3.Connection:
-    path = _db_path()
-    path.parent.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(path)
-    for table in _TABLES:
-        conn.execute(f"CREATE TABLE IF NOT EXISTS {table} (id TEXT PRIMARY KEY, data TEXT NOT NULL)")
-    return conn
-
-
-def _load_all(conn: sqlite3.Connection, table: str, model: type) -> list:
-    rows = conn.execute(f"SELECT data FROM {table} ORDER BY id").fetchall()
-    return [model.model_validate_json(row[0]) for row in rows]
-
-
-def _upsert(conn: sqlite3.Connection, table: str, entity_id: str, data: str) -> None:
-    conn.execute(
-        f"INSERT INTO {table} (id, data) VALUES (?, ?) "
-        "ON CONFLICT(id) DO UPDATE SET data = excluded.data",
-        (entity_id, data),
-    )
-
-
-def _delete_row(conn: sqlite3.Connection, table: str, entity_id: str) -> None:
-    conn.execute(f"DELETE FROM {table} WHERE id = ?", (entity_id,))
-
-
-def _get(conn: sqlite3.Connection, table: str, model: type, entity_id: str):
-    row = conn.execute(f"SELECT data FROM {table} WHERE id = ?", (entity_id,)).fetchone()
-    return model.model_validate_json(row[0]) if row else None
-
-
-def _new_id(prefix: str) -> str:
-    return f"{prefix}-{datetime.now().strftime('%Y%m%d%H%M%S%f')}"
+from planner.webdb import (
+    connect as _connect,
+    delete_row as _delete_row,
+    get_one as _get,
+    load_all as _load_all,
+    new_id as _new_id,
+    upsert as _upsert,
+)
 
 
 # ---- deterministic scheduler (planner.engine; same rules as CLI and mock) ----
@@ -378,6 +344,10 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+from planner.track_api import purge_task_data, router as track_router  # noqa: E402
+
+app.include_router(track_router)
+
 
 @app.get("/api/tasks")
 def list_tasks() -> list[Task]:
@@ -429,6 +399,8 @@ def delete_task(task_id: str) -> None:
             for block in _load_all(conn, "web_blocks", ScheduledBlock):
                 if block.taskId == task_id:
                     _delete_row(conn, "web_blocks", block.id)
+            # checklist/work logs/attachments/estimates/career card + copied files
+            purge_task_data(conn, task_id)
     finally:
         conn.close()
 

@@ -3,6 +3,7 @@ import { useQuery } from '@tanstack/react-query'
 import { useSearchParams } from 'react-router-dom'
 import { listTasks } from '../api/tasks'
 import { listBlocks } from '../api/schedule'
+import { trackingSummary } from '../api/track'
 import { TaskForm } from '../components/tasks/TaskForm'
 import { TaskList } from '../components/tasks/TaskList'
 import type { Task } from '../types'
@@ -11,8 +12,13 @@ export default function TasksPage() {
   const [searchParams, setSearchParams] = useSearchParams()
   const { data: tasks = [] } = useQuery({ queryKey: ['tasks'], queryFn: listTasks })
   const { data: blocks = [] } = useQuery({ queryKey: ['blocks'], queryFn: () => listBlocks() })
+  const { data: summaries = [] } = useQuery({
+    queryKey: ['tracking-summary'],
+    queryFn: trackingSummary,
+  })
   const [editing, setEditing] = useState<Task | null>(null)
   const creating = searchParams.get('new') === '1'
+  const tracking = Object.fromEntries(summaries.map((s) => [s.taskId, s]))
 
   return (
     <div className="mx-auto max-w-5xl">
@@ -25,7 +31,7 @@ export default function TasksPage() {
           ＋ 新建任务
         </button>
       </div>
-      <TaskList tasks={tasks} blocks={blocks} onEdit={setEditing} />
+      <TaskList tasks={tasks} blocks={blocks} onEdit={setEditing} tracking={tracking} />
       {creating && <TaskForm onClose={() => setSearchParams({})} />}
       {editing && <TaskForm initial={editing} onClose={() => setEditing(null)} />}
     </div>
