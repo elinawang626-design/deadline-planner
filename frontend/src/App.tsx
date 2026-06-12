@@ -34,7 +34,10 @@ function RegenerateButton() {
       queryClient.invalidateQueries({ queryKey: ['tasks'] })
       pushToast(
         'success',
-        `已重新生成：新增 ${summary.createdBlocks} 块，移除 ${summary.removedBlocks} 块，${summary.warnings.length} 条警告`,
+        `已重新生成：新增 ${summary.createdBlocks} 块，移除 ${summary.removedBlocks} 块，${summary.warnings.length} 条警告` +
+          (summary.totalUnscheduledMinutes > 0
+            ? `，${summary.totalUnscheduledMinutes} 分钟未排入`
+            : ''),
       )
     },
     onError: (error: unknown) =>

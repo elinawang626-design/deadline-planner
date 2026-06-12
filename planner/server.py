@@ -9,189 +9,78 @@ Run with: planner-server  (or: python3 -m uvicorn planner.server:app)
 """
 from __future__ import annotations
 
-import json
 import os
 import sqlite3
-from datetime import datetime, time, timedelta
-from math import ceil
+from datetime import date, datetime
 from pathlib import Path
-from typing import Literal, Optional
+from typing import Optional
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
+from pydantic import Field
 
-from planner.importer import ImportRejected, _extract_json_text
-from planner.models import _require_tz
-
-HORIZON_DAYS = 14
-DEFAULT_WINDOW = ("09:00", "17:00")
-DEFAULT_MAX_PLANNED_HOURS = 6
-PRIORITY_RANK = {"urgent": 0, "high": 1, "medium": 2, "low": 3}
-
-Priority = Literal["low", "medium", "high", "urgent"]
-TaskType = Literal[
-    "assignment", "exam", "project", "admin", "personal", "research", "coding", "other"
-]
-TaskStatus = Literal["active", "completed", "archived"]
-BlockSource = Literal["auto", "manual"]
-
-
-class WebModel(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-
-class PreferredWindow(WebModel):
-    weekday: int = Field(ge=0, le=6)  # 0 = Sunday (JS convention)
-    startTime: str
-    endTime: str
-
-
-class Task(WebModel):
-    id: str
-    title: str
-    description: Optional[str] = None
-    type: TaskType = "other"
-    deadline: datetime
-    estimatedMinutes: int = Field(gt=0)
-    earliestStartAt: Optional[datetime] = None
-    priority: Priority = "medium"
-    splittable: bool = True
-    minBlockMinutes: Optional[int] = None
-    maxBlockMinutes: Optional[int] = None
-    preferredWindows: Optional[list[PreferredWindow]] = None
-    notes: Optional[str] = None
-    status: TaskStatus = "active"
-    createdAt: datetime
-
-    _tz = field_validator("deadline", "earliestStartAt", "createdAt")(
-        classmethod(lambda cls, v: None if v is None else _require_tz(v))
-    )
+from planner import ai_plan
+from planner.ai_plan import KeptBlock, PlanChange, PlanMode, PlanRejected, WebState
+from planner.engine import MAX_HORIZON_DAYS, EngineTask
+from planner.engine import schedule as engine_schedule
+from planner.webmodels import (
+    DEFAULT_MAX_PLANNED_HOURS,
+    PRIORITY_RANK,
+    AvailabilityCreate,
+    AvailabilityPatch,
+    AvailabilityWindow,
+    BlockPatch,
+    FixedEvent,
+    PlanCreate,
+    PlanResponse,
+    ScheduledBlock,
+    ScheduleSummary,
+    ScheduleWarning,
+    Settings,
+    Task,
+    TaskCreate,
+    TaskPatch,
+    TaskScheduleStat,
+    WebModel,
+)
 
 
-class TaskCreate(WebModel):
-    title: str
-    description: Optional[str] = None
-    type: TaskType = "other"
-    deadline: datetime
-    estimatedMinutes: int = Field(gt=0)
-    earliestStartAt: Optional[datetime] = None
-    priority: Priority = "medium"
-    splittable: bool = True
-    minBlockMinutes: Optional[int] = None
-    maxBlockMinutes: Optional[int] = None
-    preferredWindows: Optional[list[PreferredWindow]] = None
-    notes: Optional[str] = None
-    status: TaskStatus = "active"
+# ---- AI import request/response bodies ----
 
 
-class TaskPatch(WebModel):
-    title: Optional[str] = None
-    description: Optional[str] = None
-    type: Optional[TaskType] = None
-    deadline: Optional[datetime] = None
-    estimatedMinutes: Optional[int] = None
-    earliestStartAt: Optional[datetime] = None
-    priority: Optional[Priority] = None
-    splittable: Optional[bool] = None
-    minBlockMinutes: Optional[int] = None
-    maxBlockMinutes: Optional[int] = None
-    preferredWindows: Optional[list[PreferredWindow]] = None
-    notes: Optional[str] = None
-    status: Optional[TaskStatus] = None
+class GeneratePromptBody(WebModel):
+    mode: PlanMode
+    requirements: str = ""
 
 
-class ScheduledBlock(WebModel):
-    id: str
-    taskId: str
-    startAt: datetime
-    endAt: datetime
-    locked: bool = False
-    source: BlockSource = "auto"
-    done: bool = False
-    notes: Optional[str] = None
-
-    _tz = field_validator("startAt", "endAt")(classmethod(lambda cls, v: _require_tz(v)))
-
-
-class BlockPatch(WebModel):
-    startAt: Optional[datetime] = None
-    endAt: Optional[datetime] = None
-    locked: Optional[bool] = None
-    source: Optional[BlockSource] = None
-    done: Optional[bool] = None
-    notes: Optional[str] = None
-
-
-class AvailabilityWindow(WebModel):
-    id: str
-    weekday: int = Field(ge=0, le=6)
-    startTime: str
-    endTime: str
-
-
-class AvailabilityCreate(WebModel):
-    weekday: int = Field(ge=0, le=6)
-    startTime: str
-    endTime: str
-
-
-class AvailabilityPatch(WebModel):
-    weekday: Optional[int] = Field(default=None, ge=0, le=6)
-    startTime: Optional[str] = None
-    endTime: Optional[str] = None
-
-
-class FixedEvent(WebModel):
-    id: str
-    title: str
-    startAt: datetime
-    endAt: datetime
-
-
-class Settings(WebModel):
-    dailyMaxPlannedHours: int = Field(gt=0, le=24)
-
-
-class ScheduleWarning(WebModel):
-    type: str
-    message: str
-    taskId: Optional[str] = None
-
-
-class ScheduleSummary(WebModel):
-    createdBlocks: int
-    removedBlocks: int
-    unscheduledTaskIds: list[str]
-    warnings: list[ScheduleWarning]
-
-
-# ---- AI import (mirrors the CLI's strict manual-LLM workflow) ----
-
-
-class LlmTask(WebModel):
-    id: Optional[str] = None
-    title: str
-    deadline: datetime
-    estimated_hours: int = Field(gt=0)
-    priority: Literal["high", "medium", "low"]
-    earliest_start_at: Optional[datetime] = None
-
-    _tz = field_validator("deadline", "earliest_start_at")(
-        classmethod(lambda cls, v: None if v is None else _require_tz(v))
-    )
-
-
-class LlmOutput(WebModel):
-    tasks: list[LlmTask]
-
-
-class RawInputBody(WebModel):
-    rawInput: str
-
-
-class TextBody(WebModel):
+class ValidateOutputBody(WebModel):
     text: str
+    mode: PlanMode
+
+
+class ImportBody(WebModel):
+    text: str
+    mode: PlanMode
+    previewVersion: str
+    acceptedChangeIds: Optional[list[str]] = None
+
+
+class PlanPreviewResponse(WebModel):
+    ok: bool
+    errors: list[str] = Field(default_factory=list)
+    warnings: list[str] = Field(default_factory=list)
+    previewVersion: str = ""
+    summary: dict[str, int] = Field(default_factory=dict)
+    changes: list[PlanChange] = Field(default_factory=list)
+    keptBlocks: list[KeptBlock] = Field(default_factory=list)
+    plan: Optional[dict] = None
+    useLocalScheduler: bool = False
+
+
+class ImportResponse(WebModel):
+    applied: int
+    rejected: int
+    scheduleSummary: Optional[ScheduleSummary] = None
 
 
 # ---- storage ----
@@ -238,13 +127,7 @@ def _new_id(prefix: str) -> str:
     return f"{prefix}-{datetime.now().strftime('%Y%m%d%H%M%S%f')}"
 
 
-# ---- deterministic scheduler (same rules as the frontend mock) ----
-
-
-def _ceil_hour(dt: datetime) -> datetime:
-    if dt.minute or dt.second or dt.microsecond:
-        return dt.replace(minute=0, second=0, microsecond=0) + timedelta(hours=1)
-    return dt
+# ---- deterministic scheduler (planner.engine; same rules as CLI and mock) ----
 
 
 def _minutes(hhmm: str) -> int:
@@ -252,19 +135,50 @@ def _minutes(hhmm: str) -> int:
     return int(hours) * 60 + int(minutes)
 
 
-def _js_weekday(dt: datetime) -> int:
-    return (dt.weekday() + 1) % 7  # Python Mon=0 -> JS Sun=0
+def _js_to_py_weekday(js_weekday: int) -> int:
+    return (js_weekday + 6) % 7  # JS Sun=0 -> Python Mon=0
 
 
 def _overlaps(a_start: datetime, a_end: datetime, b_start: datetime, b_end: datetime) -> bool:
     return a_start < b_end and b_start < a_end
 
 
+def _block_minutes(block: ScheduledBlock) -> int:
+    return int((block.endAt - block.startAt).total_seconds() // 60)
+
+
+def _windows_by_weekday(
+    availability: list[AvailabilityWindow],
+) -> dict[int, list[tuple[int, int]]]:
+    windows: dict[int, list[tuple[int, int]]] = {}
+    for w in availability:
+        windows.setdefault(_js_to_py_weekday(w.weekday), []).append(
+            (_minutes(w.startTime), _minutes(w.endTime))
+        )
+    return windows
+
+
+def _engine_task(task: Task, planned_minutes: int) -> EngineTask:
+    preferred = tuple(
+        (_js_to_py_weekday(w.weekday), _minutes(w.startTime), _minutes(w.endTime))
+        for w in task.preferredWindows or []
+    )
+    return EngineTask(
+        id=task.id,
+        deadline=task.deadline,
+        remaining_minutes=max(0, task.estimatedMinutes - planned_minutes),
+        priority_rank=PRIORITY_RANK[task.priority],
+        splittable=task.splittable,
+        earliest_start_at=task.earliestStartAt,
+        min_block_minutes=task.minBlockMinutes,
+        max_block_minutes=task.maxBlockMinutes,
+        preferred_windows=preferred,
+    )
+
+
 def _regenerate(conn: sqlite3.Connection) -> ScheduleSummary:
     now = datetime.now().astimezone()
     tz = now.tzinfo
-    horizon_start = _ceil_hour(now)
-    horizon_end = now + timedelta(days=HORIZON_DAYS)
 
     tasks: list[Task] = _load_all(conn, "web_tasks", Task)
     blocks: list[ScheduledBlock] = _load_all(conn, "web_blocks", ScheduledBlock)
@@ -273,157 +187,132 @@ def _regenerate(conn: sqlite3.Connection) -> ScheduleSummary:
     settings = _get(conn, "web_settings", Settings, "settings") or Settings(
         dailyMaxPlannedHours=DEFAULT_MAX_PLANNED_HOURS
     )
+    cap_minutes = settings.dailyMaxPlannedHours * 60
 
     removed_ids = {
         b.id
         for b in blocks
-        if b.source == "auto" and not b.locked and not b.done and b.startAt >= now
+        if b.source == "local_auto" and not b.locked and not b.done and b.startAt >= now
     }
     kept = [b for b in blocks if b.id not in removed_ids]
 
+    # Fixed events and every kept block occupy time; only future, not-done
+    # task blocks count toward the daily load cap.
     busy = [(e.startAt, e.endAt) for e in events] + [(b.startAt, b.endAt) for b in kept]
+    day_load: dict[date, int] = {}
+    for b in kept:
+        if b.done or b.startAt < now:
+            continue
+        key = b.startAt.astimezone(tz).date()
+        day_load[key] = day_load.get(key, 0) + _block_minutes(b)
 
-    slot_map: dict[float, datetime] = {}
-    for offset in range(HORIZON_DAYS + 1):
-        day = (now + timedelta(days=offset)).date()
-        windows = [
-            (w.startTime, w.endTime)
-            for w in availability
-            if w.weekday == _js_weekday(datetime.combine(day, time(), tzinfo=tz))
-        ] or [DEFAULT_WINDOW]
-        for start_str, end_str in windows:
-            end_min = _minutes(end_str)
-            hour = ceil(_minutes(start_str) / 60)
-            while (hour + 1) * 60 <= end_min and hour < 24:
-                slot_start = datetime.combine(day, time(hour), tzinfo=tz)
-                slot_end = slot_start + timedelta(hours=1)
-                if (
-                    slot_start >= horizon_start
-                    and slot_end <= horizon_end
-                    and not any(_overlaps(slot_start, slot_end, s, e) for s, e in busy)
-                ):
-                    slot_map[slot_start.timestamp()] = slot_start
-                hour += 1
-    free = [slot_map[key] for key in sorted(slot_map)]
+    planned_by_task: dict[str, int] = {}
+    for b in kept:
+        planned_by_task[b.taskId] = planned_by_task.get(b.taskId, 0) + _block_minutes(b)
+
+    active = [t for t in tasks if t.status == "active"]
+    titles = {t.id: t.title for t in tasks}
+    engine_tasks = [_engine_task(t, planned_by_task.get(t.id, 0)) for t in active]
+
+    result = engine_schedule(
+        now=now,
+        tz=tz,
+        tasks=engine_tasks,
+        windows_by_weekday=_windows_by_weekday(availability),
+        busy=busy,
+        initial_day_load=day_load,
+        daily_max_minutes=cap_minutes,
+    )
 
     warnings: list[ScheduleWarning] = []
     unscheduled: list[str] = []
-    created: list[ScheduledBlock] = []
-    used: set[float] = set()
-
-    active = sorted(
-        (t for t in tasks if t.status == "active"),
-        key=lambda t: (t.deadline, PRIORITY_RANK[t.priority], t.id),
-    )
-
-    for task in active:
-        if task.deadline > horizon_end:
+    overloaded_days: set[date] = set()
+    for w in result.warnings:
+        title = titles.get(w.task_id, w.task_id)
+        if w.kind == "beyond_horizon":
             warnings.append(
                 ScheduleWarning(
                     type="deadline_unreachable",
-                    taskId=task.id,
-                    message=f"任务「{task.title}」截止日超出 {HORIZON_DAYS} 天调度范围，仅安排范围内时段",
+                    taskId=w.task_id,
+                    message=f"任务「{title}」截止日超出 {MAX_HORIZON_DAYS} 天调度范围，仅安排范围内时段",
                 )
             )
-
-        planned_minutes = sum(
-            (b.endAt - b.startAt).total_seconds() / 60 for b in kept if b.taskId == task.id
-        )
-        needed_hours = ceil(max(0, task.estimatedMinutes - planned_minutes) / 60)
-        if needed_hours == 0:
-            continue
-
-        eligible = [
-            s
-            for s in free
-            if s.timestamp() not in used
-            and (task.earliestStartAt is None or s >= task.earliestStartAt)
-            and s + timedelta(hours=1) <= task.deadline
-        ]
-
-        def matches_preferred(slot: datetime) -> bool:
-            for window in task.preferredWindows or []:
-                if (
-                    window.weekday == _js_weekday(slot)
-                    and slot.hour * 60 >= _minutes(window.startTime)
-                    and (slot.hour + 1) * 60 <= _minutes(window.endTime)
-                ):
-                    return True
-            return False
-
-        picks: list[datetime] = []
-        if not task.splittable and needed_hours > 1:
-            for i in range(len(eligible) - needed_hours + 1):
-                run = eligible[i : i + needed_hours]
-                if all(
-                    (run[k] - run[k - 1]) == timedelta(hours=1) for k in range(1, len(run))
-                ):
-                    picks = run
-                    break
-            if not picks:
-                warnings.append(
-                    ScheduleWarning(
-                        type="insufficient_time",
-                        taskId=task.id,
-                        message=f"任务「{task.title}」不可拆分，且截止前找不到连续 {needed_hours} 小时空档",
-                    )
-                )
-                unscheduled.append(task.id)
-                continue
-        else:
-            if task.preferredWindows:
-                preferred = [s for s in eligible if matches_preferred(s)]
-                rest = [s for s in eligible if not matches_preferred(s)]
-                eligible = preferred + rest
-            picks = eligible[:needed_hours]
-
-        if not picks:
-            warnings.append(
-                ScheduleWarning(
-                    type="deadline_unreachable",
-                    taskId=task.id,
-                    message=f"任务「{task.title}」在截止前没有可用空档",
-                )
-            )
-            unscheduled.append(task.id)
-            continue
-        if len(picks) < needed_hours:
+        elif w.kind == "partial":
             warnings.append(
                 ScheduleWarning(
                     type="insufficient_time",
-                    taskId=task.id,
-                    message=f"任务「{task.title}」只安排了 {len(picks)}/{needed_hours} 小时",
+                    taskId=w.task_id,
+                    message=(
+                        f"任务「{title}」只安排了 {w.placed_minutes}/{w.requested_minutes} 分钟，"
+                        "截止前即使超载也没有更多可用时间"
+                    ),
                 )
             )
-
-        for slot in picks:
-            used.add(slot.timestamp())
-            created.append(
-                ScheduledBlock(
-                    id=f"auto-{task.id}-{slot.strftime('%Y%m%dT%H%M%z')}",
-                    taskId=task.id,
-                    startAt=slot,
-                    endAt=slot + timedelta(hours=1),
-                    locked=False,
-                    source="auto",
-                    done=False,
+        elif w.kind == "no_slot":
+            unscheduled.append(w.task_id)
+            warnings.append(
+                ScheduleWarning(
+                    type="deadline_unreachable",
+                    taskId=w.task_id,
+                    message=f"任务「{title}」在截止前没有可用空档",
                 )
             )
-
-    all_blocks = kept + created
-
-    hours_by_day: dict[str, float] = {}
-    for block in all_blocks:
-        key = block.startAt.astimezone(tz).strftime("%Y-%m-%d")
-        hours_by_day[key] = (
-            hours_by_day.get(key, 0) + (block.endAt - block.startAt).total_seconds() / 3600
-        )
-    for day_key, hours in sorted(hours_by_day.items()):
-        if hours > settings.dailyMaxPlannedHours:
+        elif w.kind == "non_splittable":
+            unscheduled.append(w.task_id)
+            warnings.append(
+                ScheduleWarning(
+                    type="insufficient_time",
+                    taskId=w.task_id,
+                    message=(
+                        f"任务「{title}」不可拆分，且截止前找不到足够长的连续空档"
+                    ),
+                )
+            )
+        elif w.kind == "overload" and w.day is not None:
+            overloaded_days.add(w.day)
             warnings.append(
                 ScheduleWarning(
                     type="overloaded_day",
-                    message=f"{day_key} 计划 {hours:.1f} 小时，超过每日上限 {settings.dailyMaxPlannedHours} 小时",
+                    taskId=w.task_id,
+                    message=(
+                        f"为按期完成「{title}」，{w.day.isoformat()} 在每日上限 "
+                        f"{settings.dailyMaxPlannedHours} 小时之外额外安排 {w.extra_minutes} 分钟"
+                    ),
+                )
+            )
+
+    created = [
+        ScheduledBlock(
+            id=f"auto-{b.task_id}-{b.start_at.strftime('%Y%m%dT%H%M%z')}",
+            taskId=b.task_id,
+            startAt=b.start_at,
+            endAt=b.end_at,
+            locked=False,
+            source="local_auto",
+            done=False,
+        )
+        for b in result.blocks
+    ]
+    all_blocks = kept + created
+
+    # Days overloaded purely by manual/locked blocks (the engine never plans
+    # past the cap on its own outside the warned overload days).
+    minutes_by_day: dict[date, int] = {}
+    for block in all_blocks:
+        if block.done:
+            continue
+        key = block.startAt.astimezone(tz).date()
+        minutes_by_day[key] = minutes_by_day.get(key, 0) + _block_minutes(block)
+    for day_key in sorted(minutes_by_day):
+        minutes = minutes_by_day[day_key]
+        if minutes > cap_minutes and day_key not in overloaded_days:
+            warnings.append(
+                ScheduleWarning(
+                    type="overloaded_day",
+                    message=(
+                        f"{day_key.isoformat()} 计划 {minutes / 60:.1f} 小时，"
+                        f"超过每日上限 {settings.dailyMaxPlannedHours} 小时"
+                    ),
                 )
             )
 
@@ -442,6 +331,27 @@ def _regenerate(conn: sqlite3.Connection) -> ScheduleSummary:
                     )
                 )
 
+    placed_by_task = {s.task_id: s for s in result.stats}
+    task_stats: list[TaskScheduleStat] = []
+    total_unscheduled = 0
+    for task in active:
+        planned = planned_by_task.get(task.id, 0)
+        stat = placed_by_task.get(task.id)
+        placed = stat.placed_minutes if stat else 0
+        remaining = (
+            stat.remaining_minutes
+            if stat
+            else max(0, task.estimatedMinutes - planned)
+        )
+        total_unscheduled += remaining
+        task_stats.append(
+            TaskScheduleStat(
+                taskId=task.id,
+                scheduledMinutes=planned + placed,
+                unscheduledMinutes=remaining,
+            )
+        )
+
     with conn:
         for block_id in removed_ids:
             _delete_row(conn, "web_blocks", block_id)
@@ -452,6 +362,8 @@ def _regenerate(conn: sqlite3.Connection) -> ScheduleSummary:
         createdBlocks=len(created),
         removedBlocks=len(removed_ids),
         unscheduledTaskIds=unscheduled,
+        totalUnscheduledMinutes=total_unscheduled,
+        taskStats=task_stats,
         warnings=warnings,
     )
 
@@ -544,9 +456,14 @@ def patch_block(block_id: str, body: BlockPatch) -> ScheduledBlock:
         existing = _get(conn, "web_blocks", ScheduledBlock, block_id)
         if not existing:
             raise HTTPException(404, f"block {block_id} not found")
-        updated = ScheduledBlock.model_validate(
-            existing.model_dump() | body.model_dump(exclude_unset=True)
+        patch = body.model_dump(exclude_unset=True)
+        # a user-moved/resized AI or auto block becomes a manual block
+        time_changed = ("startAt" in patch and patch["startAt"] != existing.startAt) or (
+            "endAt" in patch and patch["endAt"] != existing.endAt
         )
+        if time_changed and "source" not in patch:
+            patch["source"] = "manual"
+        updated = ScheduledBlock.model_validate(existing.model_dump() | patch)
         if updated.startAt >= updated.endAt:
             raise HTTPException(422, "endAt must be after startAt")
         with conn:
@@ -571,6 +488,135 @@ def regenerate() -> ScheduleSummary:
     conn = _connect()
     try:
         return _regenerate(conn)
+    finally:
+        conn.close()
+
+
+def _manual_plan_warnings(
+    conn: sqlite3.Connection, task: Task, block: ScheduledBlock
+) -> list[ScheduleWarning]:
+    """Manual plans are always saved; these warnings explain what they violate."""
+    tz = datetime.now().astimezone().tzinfo
+    warnings: list[ScheduleWarning] = []
+    events = _load_all(conn, "web_fixed_events", FixedEvent)
+    others = [
+        b for b in _load_all(conn, "web_blocks", ScheduledBlock) if b.id != block.id
+    ]
+    availability = _load_all(conn, "web_availability", AvailabilityWindow)
+    settings = _get(conn, "web_settings", Settings, "settings") or Settings(
+        dailyMaxPlannedHours=DEFAULT_MAX_PLANNED_HOURS
+    )
+
+    for event in events:
+        if _overlaps(block.startAt, block.endAt, event.startAt, event.endAt):
+            warnings.append(
+                ScheduleWarning(
+                    type="overlap",
+                    taskId=task.id,
+                    message=f"手动计划与固定事件「{event.title}」重叠",
+                )
+            )
+    for other in others:
+        if _overlaps(block.startAt, block.endAt, other.startAt, other.endAt):
+            warnings.append(
+                ScheduleWarning(
+                    type="overlap",
+                    taskId=task.id,
+                    message=(
+                        "手动计划与已有时间块重叠："
+                        f"{other.startAt.astimezone(tz):%m-%d %H:%M}–"
+                        f"{other.endAt.astimezone(tz):%H:%M}"
+                    ),
+                )
+            )
+
+    local_start = block.startAt.astimezone(tz)
+    local_end = block.endAt.astimezone(tz)
+    start_min = local_start.hour * 60 + local_start.minute
+    end_min = (
+        local_end.hour * 60 + local_end.minute
+        if local_end.date() == local_start.date()
+        else 24 * 60
+    )
+    if availability:
+        day_windows = [
+            (_minutes(w.startTime), _minutes(w.endTime))
+            for w in availability
+            if _js_to_py_weekday(w.weekday) == local_start.weekday()
+        ]
+    else:
+        day_windows = [(9 * 60, 17 * 60)]
+    if not any(ws <= start_min and end_min <= we for ws, we in day_windows):
+        warnings.append(
+            ScheduleWarning(
+                type="outside_availability",
+                taskId=task.id,
+                message="手动计划超出当天的可用时间窗口",
+            )
+        )
+
+    if block.endAt > task.deadline:
+        warnings.append(
+            ScheduleWarning(
+                type="past_deadline",
+                taskId=task.id,
+                message=f"手动计划晚于任务「{task.title}」的截止时间",
+            )
+        )
+
+    day_minutes = sum(
+        _block_minutes(b)
+        for b in others
+        if not b.done and b.startAt.astimezone(tz).date() == local_start.date()
+    ) + _block_minutes(block)
+    cap_minutes = settings.dailyMaxPlannedHours * 60
+    if day_minutes > cap_minutes:
+        warnings.append(
+            ScheduleWarning(
+                type="overloaded_day",
+                taskId=task.id,
+                message=(
+                    f"{local_start.date().isoformat()} 计划 {day_minutes / 60:.1f} 小时，"
+                    f"超过每日上限 {settings.dailyMaxPlannedHours} 小时"
+                ),
+            )
+        )
+    return warnings
+
+
+@app.post("/api/plans")
+def create_plan(body: PlanCreate) -> PlanResponse:
+    if body.startAt >= body.endAt:
+        raise HTTPException(422, "endAt must be after startAt")
+    if (body.taskId is None) == (body.newTask is None):
+        raise HTTPException(422, "provide exactly one of taskId or newTask")
+    now = datetime.now().astimezone()
+    conn = _connect()
+    try:
+        with conn:  # atomic: optional new task + its manual block
+            if body.taskId:
+                task = _get(conn, "web_tasks", Task, body.taskId)
+                if not task:
+                    raise HTTPException(404, f"task {body.taskId} not found")
+            else:
+                task = Task(
+                    **body.newTask.model_dump(), id=_new_id("task"), createdAt=now
+                )
+                _upsert(conn, "web_tasks", task.id, task.model_dump_json())
+            block = ScheduledBlock(
+                id=_new_id("block"),
+                taskId=task.id,
+                startAt=body.startAt,
+                endAt=body.endAt,
+                locked=True,
+                source="manual",
+                done=False,
+                notes=body.notes,
+            )
+            _upsert(conn, "web_blocks", block.id, block.model_dump_json())
+        warnings = _manual_plan_warnings(conn, task, block)
+        summary = _regenerate(conn)
+        return PlanResponse(task=task, block=block, warnings=warnings, summary=summary)
     finally:
         conn.close()
 
@@ -659,89 +705,103 @@ def put_settings(body: Settings) -> Settings:
         conn.close()
 
 
+def _load_state(conn: sqlite3.Connection) -> WebState:
+    return WebState(
+        tasks=_load_all(conn, "web_tasks", Task),
+        blocks=_load_all(conn, "web_blocks", ScheduledBlock),
+        availability=_load_all(conn, "web_availability", AvailabilityWindow),
+        events=_load_all(conn, "web_fixed_events", FixedEvent),
+        settings=_get(conn, "web_settings", Settings, "settings")
+        or Settings(dailyMaxPlannedHours=DEFAULT_MAX_PLANNED_HOURS),
+    )
+
+
+def _extract_or_422(text: str) -> ai_plan.AiPlan:
+    try:
+        return ai_plan.extract_plan(text)
+    except PlanRejected as exc:
+        raise HTTPException(422, detail={"errors": exc.errors})
+
+
 @app.post("/api/ai-import/generate-prompt")
-def generate_prompt(body: RawInputBody) -> dict:
+def generate_prompt(body: GeneratePromptBody) -> dict:
     now = datetime.now().astimezone()
     conn = _connect()
     try:
-        tasks = _load_all(conn, "web_tasks", Task)
+        state = _load_state(conn)
     finally:
         conn.close()
-    existing = [
-        {"id": t.id, "title": t.title, "deadline": t.deadline.isoformat()} for t in tasks
-    ]
-    schema = json.dumps(LlmOutput.model_json_schema(), indent=2, ensure_ascii=False)
-    prompt = f"""You are a task-parsing assistant for a local scheduling tool.
-
-Current time: {now.isoformat()}
-Timezone: {now.tzinfo}
-
-## Existing tasks (reuse the same id to update one)
-{json.dumps(existing, indent=2, ensure_ascii=False)}
-
-## User's raw input
-{body.rawInput}
-
-## Your job
-Convert the raw input into ONE JSON object matching the schema below.
-- Return ONLY a single JSON object. No prose, no multiple objects.
-- Do NOT produce calendar blocks; the local tool schedules deterministically.
-- Every datetime must be ISO 8601 with a UTC offset.
-- estimated_hours must be a positive integer.
-
-## JSON Schema
-{schema}
-"""
-    return {"prompt": prompt}
-
-
-def _parse_llm_output(text: str) -> LlmOutput:
-    try:
-        json_text = _extract_json_text(text)
-    except ImportRejected as exc:
-        raise HTTPException(422, detail={"errors": exc.errors})
-    try:
-        return LlmOutput.model_validate_json(json_text)
-    except ValidationError as exc:
-        errors = [
-            f"{'.'.join(str(loc) for loc in err['loc']) or '<root>'}: {err['msg']}"
-            for err in exc.errors()
-        ]
-        raise HTTPException(422, detail={"errors": errors})
+    return {"prompt": ai_plan.build_plan_prompt(body.mode, body.requirements, state, now)}
 
 
 @app.post("/api/ai-import/validate-output")
-def validate_output(body: TextBody) -> dict:
-    parsed = _parse_llm_output(body.text)
-    return {"ok": True, "errors": [], "count": len(parsed.tasks)}
-
-
-@app.post("/api/ai-import/import")
-def import_output(body: TextBody) -> dict:
-    parsed = _parse_llm_output(body.text)
+def validate_output(body: ValidateOutputBody) -> PlanPreviewResponse:
+    plan = _extract_or_422(body.text)
     now = datetime.now().astimezone()
     conn = _connect()
     try:
-        with conn:
-            for item in parsed.tasks:
-                task_id = item.id or _new_id("task")
-                existing = _get(conn, "web_tasks", Task, task_id)
-                task = Task(
-                    id=task_id,
-                    title=item.title,
-                    type=existing.type if existing else "other",
-                    deadline=item.deadline,
-                    estimatedMinutes=item.estimated_hours * 60,
-                    earliestStartAt=item.earliest_start_at,
-                    priority=item.priority,
-                    splittable=existing.splittable if existing else True,
-                    status=existing.status if existing else "active",
-                    createdAt=existing.createdAt if existing else now,
-                )
-                _upsert(conn, "web_tasks", task.id, task.model_dump_json())
+        state = _load_state(conn)
     finally:
         conn.close()
-    return {"imported": len(parsed.tasks)}
+    scenario = ai_plan.build_scenario(state, plan, body.mode, now)
+    return PlanPreviewResponse(
+        ok=not scenario.errors,
+        errors=scenario.errors,
+        warnings=scenario.warnings,
+        previewVersion=ai_plan.state_version(state),
+        summary=ai_plan.change_summary(scenario),
+        changes=scenario.changes,
+        keptBlocks=scenario.kept_blocks,
+        plan=plan.model_dump(mode="json", exclude_unset=True),
+        useLocalScheduler=scenario.use_local_scheduler,
+    )
+
+
+@app.post("/api/ai-import/import")
+def import_output(body: ImportBody) -> ImportResponse:
+    """Re-validate against fresh data, then apply the accepted changes atomically."""
+    plan = _extract_or_422(body.text)
+    now = datetime.now().astimezone()
+    conn = _connect()
+    try:
+        state = _load_state(conn)
+        if ai_plan.state_version(state) != body.previewVersion:
+            raise HTTPException(
+                409, detail={"errors": ["数据在预览后已发生变化，请重新校验并查看新预览"]}
+            )
+        accepted = (
+            None if body.acceptedChangeIds is None else set(body.acceptedChangeIds)
+        )
+        scenario = ai_plan.build_scenario(state, plan, body.mode, now, accepted=accepted)
+        if scenario.errors:
+            raise HTTPException(422, detail={"errors": scenario.errors})
+
+        # diff initial vs accepted-final state; write everything in one transaction
+        tables: list[tuple[str, dict, dict]] = [
+            ("web_tasks", {t.id: t for t in state.tasks}, scenario.final_tasks),
+            ("web_blocks", {b.id: b for b in state.blocks}, scenario.final_blocks),
+            (
+                "web_availability",
+                {w.id: w for w in state.availability},
+                scenario.final_availability,
+            ),
+            ("web_fixed_events", {e.id: e for e in state.events}, scenario.final_events),
+        ]
+        with conn:
+            for table, initial, final in tables:
+                for entity_id in set(initial) - set(final):
+                    _delete_row(conn, table, entity_id)
+                for entity_id, entity in final.items():
+                    if initial.get(entity_id) != entity:
+                        _upsert(conn, table, entity_id, entity.model_dump_json())
+        summary = _regenerate(conn) if scenario.use_local_scheduler else None
+        return ImportResponse(
+            applied=len(scenario.effective_ids),
+            rejected=len(scenario.changes) - len(scenario.effective_ids),
+            scheduleSummary=summary,
+        )
+    finally:
+        conn.close()
 
 
 def main() -> None:

@@ -107,7 +107,8 @@ export function BlockEditModal({ block, task, onClose }: BlockEditModalProps) {
               value={source}
               onChange={(e) => setSource(e.target.value as BlockSource)}
             >
-              <option value="auto">自动</option>
+              <option value="ai">AI 安排</option>
+              <option value="local_auto">本地自动</option>
               <option value="manual">手动</option>
             </select>
           </label>

@@ -1,87 +1,9 @@
 import { USE_MOCK, apiFetch } from './client'
-import { importParsedTasks, type ParsedLlmTask } from './mock'
-
-export interface ValidateResult {
-  ok: boolean
-  errors: string[]
-  count: number
-}
-
-function buildLocalPrompt(rawInput: string): string {
-  const tz = Intl.DateTimeFormat().resolvedOptions().timeZone
-  return [
-    'You are a task-parsing assistant for a local scheduling tool.',
-    '',
-    `Current time: ${new Date().toISOString()}`,
-    `Timezone: ${tz}`,
-    '',
-    "## User's raw input",
-    rawInput,
-    '',
-    '## Your job',
-    'Convert the raw input into ONE JSON object, no prose:',
-    '{',
-    '  "tasks": [{',
-    '    "id": "stable-id",',
-    '    "title": "...",',
-    '    "deadline": "ISO 8601 with UTC offset",',
-    '    "estimated_hours": <positive integer>,',
-    '    "priority": "high" | "medium" | "low",',
-    '    "earliest_start_at": "optional ISO 8601"',
-    '  }]',
-    '}',
-    'Do NOT produce any calendar blocks; the local tool schedules deterministically.',
-  ].join('\n')
-}
-
-function stripFences(text: string): string {
-  const match = text.trim().match(/^```(?:json)?\s*\n([\s\S]*?)\n?```$/)
-  return (match ? match[1] : text).trim()
-}
-
-function validateLocally(text: string): { result: ValidateResult; tasks: ParsedLlmTask[] } {
-  const problems: string[] = []
-  const tasks: ParsedLlmTask[] = []
-  let data: unknown
-  try {
-    data = JSON.parse(stripFences(text))
-  } catch {
-    return {
-      result: { ok: false, errors: ['不是合法 JSON（允许纯 JSON 或单个 ```json 围栏块）'], count: 0 },
-      tasks,
-    }
-  }
-  if (typeof data !== 'object' || data === null || Array.isArray(data)) {
-    problems.push('顶层必须是 JSON 对象')
-  }
-  const rawTasks = (data as { tasks?: unknown }).tasks
-  if (!Array.isArray(rawTasks) || rawTasks.length === 0) {
-    problems.push('缺少非空 tasks 数组')
-  } else {
-    rawTasks.forEach((entry, i) => {
-      const item = entry as Record<string, unknown>
-      if (typeof item.title !== 'string' || !item.title) problems.push(`tasks[${i}].title 缺失`)
-      if (typeof item.deadline !== 'string' || !/([+-]\d{2}:?\d{2}|Z)$/.test(item.deadline)) {
-        problems.push(`tasks[${i}].deadline 必须是带时区偏移的 ISO 8601`)
-      }
-      if (
-        typeof item.estimated_hours !== 'number' ||
-        item.estimated_hours <= 0 ||
-        !Number.isInteger(item.estimated_hours)
-      ) {
-        problems.push(`tasks[${i}].estimated_hours 必须是正整数`)
-      }
-      if (item.priority !== 'high' && item.priority !== 'medium' && item.priority !== 'low') {
-        problems.push(`tasks[${i}].priority 必须是 high/medium/low`)
-      }
-      if (problems.length === 0) tasks.push(item as unknown as ParsedLlmTask)
-    })
-  }
-  return { result: { ok: problems.length === 0, errors: problems, count: tasks.length }, tasks }
-}
+import { generatePlanPromptMock, importPlanMock, validatePlanOutputMock } from './mock'
+import type { PlanImportResult, PlanMode, PlanPreview } from '../types'
 
 function backendErrors(error: unknown): string[] {
-  // backend returns 422 with {"detail": {"errors": [...]}}
+  // backend returns 409/422 with {"detail": {"errors": [...]}}
   if (error instanceof Error) {
     const match = error.message.match(/\{.*\}$/s)
     if (match) {
@@ -94,39 +16,58 @@ function backendErrors(error: unknown): string[] {
     }
     return [error.message]
   }
-  return ['校验失败']
+  return ['请求失败']
 }
 
-export async function generatePrompt(rawInput: string): Promise<string> {
-  if (USE_MOCK) return buildLocalPrompt(rawInput)
+const EMPTY_PREVIEW: Omit<PlanPreview, 'ok' | 'errors'> = {
+  warnings: [],
+  previewVersion: '',
+  summary: {},
+  changes: [],
+  keptBlocks: [],
+  useLocalScheduler: false,
+}
+
+export async function generatePlanPrompt(
+  mode: PlanMode,
+  requirements: string,
+): Promise<string> {
+  if (USE_MOCK) return generatePlanPromptMock(mode, requirements)
   const res = await apiFetch<{ prompt: string }>('/ai-import/generate-prompt', {
     method: 'POST',
-    body: JSON.stringify({ rawInput }),
+    body: JSON.stringify({ mode, requirements }),
   })
   return res.prompt
 }
 
-export async function validateOutput(text: string): Promise<ValidateResult> {
-  if (USE_MOCK) return validateLocally(text).result
+export async function validatePlanOutput(
+  text: string,
+  mode: PlanMode,
+): Promise<PlanPreview> {
+  if (USE_MOCK) return validatePlanOutputMock(text, mode)
   try {
-    return await apiFetch<ValidateResult>('/ai-import/validate-output', {
+    return await apiFetch<PlanPreview>('/ai-import/validate-output', {
       method: 'POST',
-      body: JSON.stringify({ text }),
+      body: JSON.stringify({ text, mode }),
     })
   } catch (error: unknown) {
-    return { ok: false, errors: backendErrors(error), count: 0 }
+    return { ok: false, errors: backendErrors(error), ...EMPTY_PREVIEW }
   }
 }
 
-export async function importOutput(text: string): Promise<number> {
-  if (USE_MOCK) {
-    const { result, tasks } = validateLocally(text)
-    if (!result.ok) throw new Error(result.errors.join('；'))
-    return importParsedTasks(tasks)
+export async function importPlan(
+  text: string,
+  mode: PlanMode,
+  previewVersion: string,
+  acceptedChangeIds?: string[],
+): Promise<PlanImportResult> {
+  if (USE_MOCK) return importPlanMock(text, mode, previewVersion, acceptedChangeIds)
+  try {
+    return await apiFetch<PlanImportResult>('/ai-import/import', {
+      method: 'POST',
+      body: JSON.stringify({ text, mode, previewVersion, acceptedChangeIds }),
+    })
+  } catch (error: unknown) {
+    throw new Error(backendErrors(error).join('；'), { cause: error })
   }
-  const res = await apiFetch<{ imported: number }>('/ai-import/import', {
-    method: 'POST',
-    body: JSON.stringify({ text }),
-  })
-  return res.imported
 }

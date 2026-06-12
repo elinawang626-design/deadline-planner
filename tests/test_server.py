@@ -52,9 +52,14 @@ def test_task_rejects_extra_fields(client):
 def test_regenerate_creates_blocks_and_respects_lock(client):
     task = client.post("/api/tasks", json=make_task_body()).json()
     summary = client.post("/api/schedule/regenerate").json()
-    assert summary["createdBlocks"] == 2
     blocks = client.get("/api/schedule/blocks").json()
-    assert len(blocks) == 2
+    assert summary["createdBlocks"] == len(blocks)
+    total_minutes = sum(
+        (datetime.fromisoformat(b["endAt"]) - datetime.fromisoformat(b["startAt"]))
+        // timedelta(minutes=1)
+        for b in blocks
+    )
+    assert total_minutes == 120
     assert all(b["taskId"] == task["id"] for b in blocks)
 
     locked = client.patch(
@@ -97,52 +102,178 @@ def test_availability_rejects_inverted_window(client):
     assert res.status_code == 422
 
 
+def test_regenerate_summary_includes_unscheduled_minutes_and_task_stats(client):
+    task = client.post("/api/tasks", json=make_task_body()).json()
+    summary = client.post("/api/schedule/regenerate").json()
+    assert summary["totalUnscheduledMinutes"] == 0
+    stats = {s["taskId"]: s for s in summary["taskStats"]}
+    assert stats[task["id"]]["scheduledMinutes"] == 120
+    assert stats[task["id"]]["unscheduledMinutes"] == 0
+
+
+def plan_window(days=1, start_hour=9, hours=1):
+    start = future(days=days).replace(hour=start_hour, minute=0, second=0, microsecond=0)
+    return iso(start), iso(start + timedelta(hours=hours))
+
+
+def test_create_plan_with_existing_task(client):
+    task = client.post("/api/tasks", json=make_task_body()).json()
+    start, end = plan_window()
+    res = client.post(
+        "/api/plans",
+        json={"taskId": task["id"], "startAt": start, "endAt": end, "notes": "先写大纲"},
+    )
+    assert res.status_code == 200, res.text
+    body = res.json()
+    assert body["task"]["id"] == task["id"]
+    assert body["block"]["source"] == "manual"
+    assert body["block"]["locked"] is True
+    assert body["block"]["notes"] == "先写大纲"
+    assert "summary" in body and "warnings" in body
+    blocks = client.get("/api/schedule/blocks").json()
+    assert any(b["id"] == body["block"]["id"] for b in blocks)
+
+
+def test_create_plan_with_new_task_is_atomic(client):
+    start, end = plan_window(hours=2)
+    res = client.post(
+        "/api/plans",
+        json={"newTask": make_task_body(), "startAt": start, "endAt": end},
+    )
+    assert res.status_code == 200, res.text
+    body = res.json()
+    task_id = body["task"]["id"]
+    assert any(t["id"] == task_id for t in client.get("/api/tasks").json())
+    manual = [
+        b
+        for b in client.get("/api/schedule/blocks").json()
+        if b["taskId"] == task_id and b["source"] == "manual"
+    ]
+    assert len(manual) == 1
+
+
+def test_create_plan_validation(client):
+    start, end = plan_window()
+    # neither taskId nor newTask
+    assert (
+        client.post("/api/plans", json={"startAt": start, "endAt": end}).status_code
+        == 422
+    )
+    # both
+    assert (
+        client.post(
+            "/api/plans",
+            json={
+                "taskId": "x",
+                "newTask": make_task_body(),
+                "startAt": start,
+                "endAt": end,
+            },
+        ).status_code
+        == 422
+    )
+    # inverted times
+    assert (
+        client.post(
+            "/api/plans", json={"taskId": "x", "startAt": end, "endAt": start}
+        ).status_code
+        == 422
+    )
+    # unknown task creates nothing
+    assert (
+        client.post(
+            "/api/plans", json={"taskId": "missing", "startAt": start, "endAt": end}
+        ).status_code
+        == 404
+    )
+    assert client.get("/api/schedule/blocks").json() == []
+
+
+def test_create_plan_warns_on_overlap_and_overload(client):
+    task = client.post("/api/tasks", json=make_task_body()).json()
+    start, end = plan_window(hours=2)
+    first = client.post(
+        "/api/plans", json={"taskId": task["id"], "startAt": start, "endAt": end}
+    ).json()
+    assert not any(w["type"] == "overlap" for w in first["warnings"])
+    # second manual plan overlaps the first -> saved anyway, with a warning
+    second = client.post(
+        "/api/plans", json={"taskId": task["id"], "startAt": start, "endAt": end}
+    )
+    assert second.status_code == 200
+    assert any(w["type"] == "overlap" for w in second.json()["warnings"])
+
+    # a 7-hour manual plan exceeds the default 6-hour daily cap
+    start7, end7 = plan_window(days=2, hours=7)
+    res = client.post(
+        "/api/plans", json={"taskId": task["id"], "startAt": start7, "endAt": end7}
+    )
+    assert res.status_code == 200
+    assert any(w["type"] == "overloaded_day" for w in res.json()["warnings"])
+
+
 def test_ai_import_flow(client):
+    """End-to-end happy path; detailed AI import rules live in test_ai_plan.py."""
     prompt = client.post(
-        "/api/ai-import/generate-prompt", json={"rawInput": "finish thesis by friday"}
+        "/api/ai-import/generate-prompt",
+        json={"mode": "tasks_only", "requirements": "finish thesis by friday"},
     ).json()["prompt"]
     assert "finish thesis by friday" in prompt
     assert "JSON Schema" in prompt
 
+    deadline = future(days=4).replace(hour=18, minute=0, second=0, microsecond=0)
     output = json.dumps(
         {
             "tasks": [
                 {
                     "id": "thesis",
                     "title": "Thesis draft",
-                    "deadline": iso(future(days=4)),
-                    "estimated_hours": 3,
+                    "deadline": iso(deadline),
+                    "estimated_minutes": 180,
                     "priority": "high",
                 }
             ]
         }
     )
-    valid = client.post("/api/ai-import/validate-output", json={"text": output}).json()
-    assert valid == {"ok": True, "errors": [], "count": 1}
+    valid = client.post(
+        "/api/ai-import/validate-output", json={"text": output, "mode": "tasks_only"}
+    ).json()
+    assert valid["ok"] is True
+    assert valid["summary"] == {"task_add": 1}
 
-    imported = client.post("/api/ai-import/import", json={"text": output}).json()
-    assert imported == {"imported": 1}
+    imported = client.post(
+        "/api/ai-import/import",
+        json={"text": output, "mode": "tasks_only",
+              "previewVersion": valid["previewVersion"]},
+    ).json()
+    assert imported["applied"] == 1
     tasks = client.get("/api/tasks").json()
     assert tasks[0]["id"] == "thesis"
     assert tasks[0]["estimatedMinutes"] == 180
 
 
-def test_ai_import_rejects_prose_and_bad_priority(client):
-    bad_wrap = 'Here you go: {"tasks": []}'
-    res = client.post("/api/ai-import/validate-output", json={"text": bad_wrap})
+def test_ai_import_rejects_invalid_output(client):
+    no_json = "Here you go: nothing structured"
+    res = client.post(
+        "/api/ai-import/validate-output", json={"text": no_json, "mode": "tasks_only"}
+    )
     assert res.status_code == 422
 
     bad_priority = json.dumps(
         {
             "tasks": [
                 {
+                    "id": "x",
                     "title": "X",
                     "deadline": iso(future(days=1)),
-                    "estimated_hours": 1,
-                    "priority": "urgent",
+                    "estimated_minutes": 60,
+                    "priority": "asap",
                 }
             ]
         }
     )
-    res = client.post("/api/ai-import/validate-output", json={"text": bad_priority})
+    res = client.post(
+        "/api/ai-import/validate-output",
+        json={"text": bad_priority, "mode": "tasks_only"},
+    )
     assert res.status_code == 422

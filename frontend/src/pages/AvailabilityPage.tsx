@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
   createAvailability,
@@ -40,10 +40,11 @@ export default function AvailabilityPage() {
   const { data: windows = [] } = useQuery({ queryKey: ['availability'], queryFn: listAvailability })
   const { data: settings } = useQuery({ queryKey: ['settings'], queryFn: getSettings })
   const [maxHours, setMaxHours] = useState('6')
-
-  useEffect(() => {
-    if (settings) setMaxHours(String(settings.dailyMaxPlannedHours))
-  }, [settings])
+  const [syncedSettings, setSyncedSettings] = useState(settings)
+  if (settings && settings !== syncedSettings) {
+    setSyncedSettings(settings)
+    setMaxHours(String(settings.dailyMaxPlannedHours))
+  }
 
   const invalidate = () => queryClient.invalidateQueries({ queryKey: ['availability'] })
   const create = useMutation({ mutationFn: createAvailability, onSuccess: invalidate })

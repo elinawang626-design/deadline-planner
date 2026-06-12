@@ -7,6 +7,7 @@ import { useUI } from '../store/ui'
 import { DayView } from '../components/calendar/DayView'
 import { BlockEditModal } from '../components/schedule/BlockEditModal'
 import { TaskForm } from '../components/tasks/TaskForm'
+import { PlanForm } from '../components/plans/PlanForm'
 import { WEEKDAY_LABELS } from '../lib/labels'
 import type { ScheduledBlock } from '../types'
 
@@ -23,7 +24,8 @@ export default function DayPage() {
     queryFn: listFixedEvents,
   })
   const [editing, setEditing] = useState<ScheduledBlock | null>(null)
-  const [creating, setCreating] = useState(false)
+  const [creatingTask, setCreatingTask] = useState(false)
+  const [creatingPlan, setCreatingPlan] = useState(false)
 
   const shift = (days: number) => setCurrentDate(format(addDays(date, days), 'yyyy-MM-dd'))
 
@@ -39,10 +41,16 @@ export default function DayPage() {
           {format(date, 'yyyy年M月d日')} {WEEKDAY_LABELS[date.getDay()]}
         </h2>
         <button
-          onClick={() => setCreating(true)}
+          onClick={() => setCreatingTask(true)}
           className="ml-auto rounded-md border border-gray-300 px-3 py-1.5 text-sm hover:bg-gray-50"
         >
           ＋ 新建任务
+        </button>
+        <button
+          onClick={() => setCreatingPlan(true)}
+          className="rounded-md border border-gray-300 px-3 py-1.5 text-sm hover:bg-gray-50"
+        >
+          ＋ 新建计划
         </button>
       </div>
       <DayView
@@ -59,7 +67,12 @@ export default function DayPage() {
           onClose={() => setEditing(null)}
         />
       )}
-      {creating && <TaskForm onClose={() => setCreating(false)} />}
+      {creatingTask && (
+        <TaskForm initialDeadlineDate={currentDate} onClose={() => setCreatingTask(false)} />
+      )}
+      {creatingPlan && (
+        <PlanForm defaultDate={currentDate} onClose={() => setCreatingPlan(false)} />
+      )}
     </div>
   )
 }

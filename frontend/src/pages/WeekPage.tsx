@@ -9,6 +9,7 @@ import { useUI } from '../store/ui'
 import { WeekView } from '../components/calendar/WeekView'
 import { BlockEditModal } from '../components/schedule/BlockEditModal'
 import { TaskForm } from '../components/tasks/TaskForm'
+import { PlanForm } from '../components/plans/PlanForm'
 import type { ScheduledBlock } from '../types'
 
 const navBtn = 'rounded-md border border-gray-300 px-2 py-1 text-sm hover:bg-gray-50'
@@ -29,7 +30,8 @@ export default function WeekPage() {
     queryFn: getSettings,
   })
   const [editing, setEditing] = useState<ScheduledBlock | null>(null)
-  const [creating, setCreating] = useState(false)
+  const [taskDate, setTaskDate] = useState<string | null>(null)
+  const [planDate, setPlanDate] = useState<string | null>(null)
 
   return (
     <div className="mx-auto max-w-6xl">
@@ -52,7 +54,8 @@ export default function WeekPage() {
           navigate('/day')
         }}
         onBlockClick={setEditing}
-        onAddTask={() => setCreating(true)}
+        onCreateTask={(day) => setTaskDate(format(day, 'yyyy-MM-dd'))}
+        onCreatePlan={(day) => setPlanDate(format(day, 'yyyy-MM-dd'))}
       />
       {editing && (
         <BlockEditModal
@@ -61,7 +64,8 @@ export default function WeekPage() {
           onClose={() => setEditing(null)}
         />
       )}
-      {creating && <TaskForm onClose={() => setCreating(false)} />}
+      {taskDate && <TaskForm initialDeadlineDate={taskDate} onClose={() => setTaskDate(null)} />}
+      {planDate && <PlanForm defaultDate={planDate} onClose={() => setPlanDate(null)} />}
     </div>
   )
 }

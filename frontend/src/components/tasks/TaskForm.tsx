@@ -14,10 +14,12 @@ const labelCls = 'mb-1 block text-xs font-medium text-gray-600'
 
 interface TaskFormProps {
   initial?: Task
+  /** "yyyy-MM-dd" deadline prefill for new tasks (the clicked calendar date). */
+  initialDeadlineDate?: string
   onClose: () => void
 }
 
-export function TaskForm({ initial, onClose }: TaskFormProps) {
+export function TaskForm({ initial, initialDeadlineDate, onClose }: TaskFormProps) {
   const queryClient = useQueryClient()
   const pushToast = useUI((s) => s.pushToast)
   const setLastSummary = useUI((s) => s.setLastSummary)
@@ -26,7 +28,7 @@ export function TaskForm({ initial, onClose }: TaskFormProps) {
   const [description, setDescription] = useState(initial?.description ?? '')
   const [type, setType] = useState<TaskType>(initial?.type ?? 'assignment')
   const [deadlineDate, setDeadlineDate] = useState(
-    initial ? format(parseISO(initial.deadline), 'yyyy-MM-dd') : '',
+    initial ? format(parseISO(initial.deadline), 'yyyy-MM-dd') : (initialDeadlineDate ?? ''),
   )
   const [deadlineTime, setDeadlineTime] = useState(
     initial ? format(parseISO(initial.deadline), 'HH:mm') : '18:00',

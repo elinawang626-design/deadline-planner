@@ -1,15 +1,27 @@
 import { addDays, format, isSameDay, isSameMonth, isToday, parseISO, startOfMonth, startOfWeek } from 'date-fns'
 import type { ScheduledBlock, Settings, Task } from '../../types'
 
+const NEAR_CAP_RATIO = 0.8
+
 interface MonthViewProps {
   month: Date
   blocks: ScheduledBlock[]
   tasks: Task[]
   settings: Settings
   onSelectDay: (day: Date) => void
+  onCreateTask: (day: Date) => void
+  onCreatePlan: (day: Date) => void
 }
 
-export function MonthView({ month, blocks, tasks, settings, onSelectDay }: MonthViewProps) {
+export function MonthView({
+  month,
+  blocks,
+  tasks,
+  settings,
+  onSelectDay,
+  onCreateTask,
+  onCreatePlan,
+}: MonthViewProps) {
   const taskById = new Map(tasks.map((t) => [t.id, t]))
   const gridStart = startOfWeek(startOfMonth(month), { weekStartsOn: 1 })
   const cells = Array.from({ length: 42 }, (_, i) => addDays(gridStart, i))
@@ -34,12 +46,19 @@ export function MonthView({ month, blocks, tasks, settings, onSelectDay }: Month
             (t) => t.status === 'active' && isSameDay(parseISO(t.deadline), day),
           ).length
           const overloaded = plannedHours > settings.dailyMaxPlannedHours
+          const nearCap =
+            !overloaded && plannedHours >= settings.dailyMaxPlannedHours * NEAR_CAP_RATIO
           const top = dayBlocks.slice(0, 2)
           return (
-            <button
+            <div
               key={day.toISOString()}
+              role="button"
+              tabIndex={0}
               onClick={() => onSelectDay(day)}
-              className={`min-h-24 bg-white p-1 text-left align-top hover:bg-blue-50 ${
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') onSelectDay(day)
+              }}
+              className={`group min-h-24 cursor-pointer bg-white p-1 text-left align-top hover:bg-blue-50 ${
                 isSameMonth(day, month) ? '' : 'opacity-40'
               }`}
             >
@@ -54,7 +73,39 @@ export function MonthView({ month, blocks, tasks, settings, onSelectDay }: Month
                     {dayBlocks.length}块 {plannedHours.toFixed(0)}h
                   </span>
                 )}
-                {overloaded && <span className="h-1.5 w-1.5 rounded-full bg-red-500" title="超载" />}
+                {overloaded && (
+                  <span
+                    className="rounded bg-red-100 px-1 text-[10px] text-red-700"
+                    title={`超过每日上限 ${settings.dailyMaxPlannedHours} 小时`}
+                  >
+                    +{(plannedHours - settings.dailyMaxPlannedHours).toFixed(1)}h
+                  </span>
+                )}
+                {nearCap && (
+                  <span className="h-1.5 w-1.5 rounded-full bg-amber-400" title="接近每日上限" />
+                )}
+                <span className="ml-auto hidden gap-0.5 group-hover:flex">
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      onCreateTask(day)
+                    }}
+                    title="新建任务（截止日预填此日期）"
+                    className="rounded bg-white px-1 text-[10px] text-gray-500 shadow hover:text-blue-600"
+                  >
+                    ＋任务
+                  </button>
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      onCreatePlan(day)
+                    }}
+                    title="新建计划（日期预填此日期）"
+                    className="rounded bg-white px-1 text-[10px] text-gray-500 shadow hover:text-blue-600"
+                  >
+                    ＋计划
+                  </button>
+                </span>
               </div>
               {dueCount > 0 && (
                 <div className="mt-0.5 inline-block rounded bg-rose-100 px-1 text-[10px] text-rose-700">
@@ -69,7 +120,7 @@ export function MonthView({ month, blocks, tasks, settings, onSelectDay }: Month
               {dayBlocks.length > top.length && (
                 <div className="text-[10px] text-gray-400">+{dayBlocks.length - top.length} 更多</div>
               )}
-            </button>
+            </div>
           )
         })}
       </div>

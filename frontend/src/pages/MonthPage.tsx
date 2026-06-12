@@ -1,3 +1,4 @@
+import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { useNavigate } from 'react-router-dom'
 import { addMonths, format, parseISO } from 'date-fns'
@@ -6,6 +7,8 @@ import { listBlocks } from '../api/schedule'
 import { getSettings } from '../api/availability'
 import { useUI } from '../store/ui'
 import { MonthView } from '../components/calendar/MonthView'
+import { TaskForm } from '../components/tasks/TaskForm'
+import { PlanForm } from '../components/plans/PlanForm'
 
 const navBtn = 'rounded-md border border-gray-300 px-2 py-1 text-sm hover:bg-gray-50'
 
@@ -20,6 +23,8 @@ export default function MonthPage() {
     queryKey: ['settings'],
     queryFn: getSettings,
   })
+  const [taskDate, setTaskDate] = useState<string | null>(null)
+  const [planDate, setPlanDate] = useState<string | null>(null)
 
   return (
     <div className="mx-auto max-w-5xl">
@@ -38,7 +43,11 @@ export default function MonthPage() {
           setCurrentDate(format(day, 'yyyy-MM-dd'))
           navigate('/day')
         }}
+        onCreateTask={(day) => setTaskDate(format(day, 'yyyy-MM-dd'))}
+        onCreatePlan={(day) => setPlanDate(format(day, 'yyyy-MM-dd'))}
       />
+      {taskDate && <TaskForm initialDeadlineDate={taskDate} onClose={() => setTaskDate(null)} />}
+      {planDate && <PlanForm defaultDate={planDate} onClose={() => setPlanDate(null)} />}
     </div>
   )
 }

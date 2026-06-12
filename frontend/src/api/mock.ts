@@ -5,14 +5,29 @@
  * to the real HTTP API.
  */
 import { addDays, addHours, format, startOfDay } from 'date-fns'
+import {
+  buildPrompt,
+  buildScenario,
+  changeSummary,
+  extractPlan,
+  stateVersion,
+  type PlanState,
+} from './aiPlan'
+import { MAX_HORIZON_DAYS, scheduleEngine, type EngineTask } from './mockEngine'
 import type {
   AvailabilityWindow,
   FixedEvent,
+  PlanCreate,
+  PlanCreateResult,
+  PlanImportResult,
+  PlanMode,
+  PlanPreview,
   ScheduleSummary,
   ScheduleWarning,
   ScheduledBlock,
   Settings,
   Task,
+  TaskScheduleStat,
   TaskStatus,
 } from '../types'
 
@@ -26,8 +41,6 @@ interface MockState {
 
 const STORAGE_KEY = 'deadline-planner-mock-v1'
 const MOCK_LATENCY_MS = 60
-const HORIZON_DAYS = 14
-const DEFAULT_WINDOW = { startTime: '09:00', endTime: '17:00' }
 const PRIORITY_RANK: Record<string, number> = { urgent: 0, high: 1, medium: 2, low: 3 }
 
 function seed(): MockState {
@@ -72,6 +85,16 @@ function seed(): MockState {
   }
 }
 
+function migrate(state: MockState): MockState {
+  // legacy stored source 'auto' becomes 'local_auto'
+  return {
+    ...state,
+    blocks: state.blocks.map((b) =>
+      (b.source as string) === 'auto' ? { ...b, source: 'local_auto' } : b,
+    ),
+  }
+}
+
 function load(): MockState {
   const raw = localStorage.getItem(STORAGE_KEY)
   if (!raw) {
@@ -80,7 +103,7 @@ function load(): MockState {
     return state
   }
   try {
-    return JSON.parse(raw) as MockState
+    return migrate(JSON.parse(raw) as MockState)
   } catch {
     const state = seed()
     save(state)
@@ -155,6 +178,13 @@ export async function updateBlock(
   const state = load()
   const existing = state.blocks.find((b) => b.id === id)
   if (!existing) throw new Error(`时间块 ${id} 不存在`)
+  // a user-moved/resized AI or auto block becomes a manual block
+  const timeChanged =
+    (patch.startAt !== undefined && patch.startAt !== existing.startAt) ||
+    (patch.endAt !== undefined && patch.endAt !== existing.endAt)
+  if (timeChanged && patch.source === undefined) {
+    patch = { ...patch, source: 'manual' }
+  }
   const updated: ScheduledBlock = { ...existing, ...patch, id }
   save({ ...state, blocks: state.blocks.map((b) => (b.id === id ? updated : b)) })
   return delay(updated)
@@ -219,54 +249,96 @@ export async function saveSettings(settings: Settings): Promise<Settings> {
   return delay(settings)
 }
 
-// ---- AI import ----
+// ---- AI plan import (same parse / preview / import rules as the backend) ----
 
-/** Shape produced by the manual LLM workflow (mirrors the backend ParsedTask). */
-export interface ParsedLlmTask {
-  id?: string
-  title: string
-  deadline: string
-  estimated_hours: number
-  priority: 'high' | 'medium' | 'low'
-  earliest_start_at?: string
-}
-
-export async function importParsedTasks(items: ParsedLlmTask[]): Promise<number> {
-  const state = load()
-  let tasks = state.tasks
-  for (const item of items) {
-    const id = item.id ?? newId('task')
-    const existing = tasks.find((t) => t.id === id)
-    const merged: Task = {
-      id,
-      title: item.title,
-      type: existing?.type ?? 'other',
-      deadline: item.deadline,
-      estimatedMinutes: Math.round(item.estimated_hours * 60),
-      earliestStartAt: item.earliest_start_at,
-      priority: item.priority,
-      splittable: existing?.splittable ?? true,
-      status: existing?.status ?? 'active',
-      createdAt: existing?.createdAt ?? new Date().toISOString(),
-    }
-    tasks = existing
-      ? tasks.map((t) => (t.id === id ? { ...t, ...merged } : t))
-      : [...tasks, merged]
+function toPlanState(state: MockState): PlanState {
+  return {
+    tasks: state.tasks,
+    blocks: state.blocks,
+    availability: state.availability,
+    fixedEvents: state.fixedEvents,
+    settings: state.settings,
   }
-  save({ ...state, tasks })
-  return delay(items.length)
 }
 
-// ---- deterministic scheduler (port of the Python backend) ----
+export async function generatePlanPromptMock(
+  mode: PlanMode,
+  requirements: string,
+): Promise<string> {
+  return delay(buildPrompt(mode, requirements, toPlanState(load()), new Date()))
+}
 
-function ceilToHour(date: Date): Date {
-  const copy = new Date(date)
-  if (copy.getMinutes() || copy.getSeconds() || copy.getMilliseconds()) {
-    copy.setMinutes(0, 0, 0)
-    return addHours(copy, 1)
+export async function validatePlanOutputMock(
+  text: string,
+  mode: PlanMode,
+): Promise<PlanPreview> {
+  const state = toPlanState(load())
+  const { plan, errors } = extractPlan(text)
+  if (!plan) {
+    return delay({
+      ok: false,
+      errors,
+      warnings: [],
+      previewVersion: '',
+      summary: {},
+      changes: [],
+      keptBlocks: [],
+      useLocalScheduler: false,
+    })
   }
-  return copy
+  const scenario = buildScenario(state, plan, mode, new Date())
+  return delay({
+    ok: scenario.errors.length === 0,
+    errors: scenario.errors,
+    warnings: scenario.warnings,
+    previewVersion: stateVersion(state),
+    summary: changeSummary(scenario),
+    changes: scenario.changes,
+    keptBlocks: scenario.keptBlocks,
+    useLocalScheduler: scenario.useLocalScheduler,
+  })
 }
+
+export async function importPlanMock(
+  text: string,
+  mode: PlanMode,
+  previewVersion: string,
+  acceptedChangeIds?: string[],
+): Promise<PlanImportResult> {
+  const mockState = load()
+  const state = toPlanState(mockState)
+  if (stateVersion(state) !== previewVersion) {
+    throw new Error('数据在预览后已发生变化，请重新校验并查看新预览')
+  }
+  const { plan, errors } = extractPlan(text)
+  if (!plan) throw new Error(errors.join('；'))
+  const accepted = acceptedChangeIds === undefined ? undefined : new Set(acceptedChangeIds)
+  const scenario = buildScenario(state, plan, mode, new Date(), accepted)
+  if (scenario.errors.length) throw new Error(scenario.errors.join('；'))
+
+  // atomic in mock terms: a single save() of the accepted final state
+  let nextState: MockState = {
+    ...mockState,
+    tasks: [...scenario.finalTasks.values()],
+    blocks: [...scenario.finalBlocks.values()],
+    availability: [...scenario.finalAvailability.values()],
+    fixedEvents: [...scenario.finalEvents.values()],
+  }
+  let scheduleSummary: ScheduleSummary | undefined
+  if (scenario.useLocalScheduler) {
+    const result = runScheduler(nextState)
+    nextState = result.state
+    scheduleSummary = result.summary
+  }
+  save(nextState)
+  return delay({
+    applied: scenario.effectiveIds.size,
+    rejected: scenario.changes.length - scenario.effectiveIds.size,
+    scheduleSummary,
+  })
+}
+
+// ---- deterministic scheduler (engine port shared with the backend) ----
 
 function minutesOf(time: string): number {
   const [h, m] = time.split(':').map(Number)
@@ -277,179 +349,141 @@ function overlaps(aStart: Date, aEnd: Date, bStart: Date, bEnd: Date): boolean {
   return aStart < bEnd && bStart < aEnd
 }
 
-export async function regenerateSchedule(): Promise<ScheduleSummary> {
-  const state = load()
-  const now = new Date()
-  const horizonStart = ceilToHour(now)
-  const horizonEnd = addDays(now, HORIZON_DAYS)
+function blockMinutes(block: ScheduledBlock): number {
+  return Math.round(
+    (new Date(block.endAt).getTime() - new Date(block.startAt).getTime()) / 60_000,
+  )
+}
 
-  // replace only future, unlocked, auto-generated, not-done blocks
+function runScheduler(state: MockState): { state: MockState; summary: ScheduleSummary } {
+  const now = new Date()
+  const capMinutes = state.settings.dailyMaxPlannedHours * 60
+
+  // replace only future, unlocked, locally auto-generated, not-done blocks
   const removedIds = new Set(
     state.blocks
-      .filter((b) => b.source === 'auto' && !b.locked && !b.done && new Date(b.startAt) >= now)
+      .filter(
+        (b) => b.source === 'local_auto' && !b.locked && !b.done && new Date(b.startAt) >= now,
+      )
       .map((b) => b.id),
   )
   const kept = state.blocks.filter((b) => !removedIds.has(b.id))
 
+  // fixed events and kept blocks occupy time; only future not-done task
+  // blocks count toward the daily load cap
   const busy: Array<[Date, Date]> = [
     ...state.fixedEvents.map((e): [Date, Date] => [new Date(e.startAt), new Date(e.endAt)]),
     ...kept.map((b): [Date, Date] => [new Date(b.startAt), new Date(b.endAt)]),
   ]
-
-  // one-hour free slots from availability (default 09:00-17:00 when none)
-  const slotSet = new Map<number, Date>()
-  for (let i = 0; i <= HORIZON_DAYS; i++) {
-    const day = startOfDay(addDays(now, i))
-    const windows = state.availability.filter((w) => w.weekday === day.getDay())
-    const effective = windows.length ? windows : [DEFAULT_WINDOW]
-    for (const w of effective) {
-      const endMin = minutesOf(w.endTime)
-      for (let h = Math.ceil(minutesOf(w.startTime) / 60); (h + 1) * 60 <= endMin; h++) {
-        const slotStart = addHours(day, h)
-        const slotEnd = addHours(slotStart, 1)
-        if (slotStart < horizonStart || slotEnd > horizonEnd) continue
-        if (busy.some(([s, e]) => overlaps(slotStart, slotEnd, s, e))) continue
-        slotSet.set(slotStart.getTime(), slotStart)
-      }
-    }
+  const dayLoad = new Map<string, number>()
+  for (const b of kept) {
+    if (b.done || new Date(b.startAt) < now) continue
+    const key = format(new Date(b.startAt), 'yyyy-MM-dd')
+    dayLoad.set(key, (dayLoad.get(key) ?? 0) + blockMinutes(b))
   }
-  const free = [...slotSet.values()].sort((a, b) => a.getTime() - b.getTime())
+  const plannedByTask = new Map<string, number>()
+  for (const b of kept) {
+    plannedByTask.set(b.taskId, (plannedByTask.get(b.taskId) ?? 0) + blockMinutes(b))
+  }
+
+  const active = state.tasks.filter((t) => t.status === 'active')
+  const titles = new Map(state.tasks.map((t) => [t.id, t.title]))
+  const engineTasks: EngineTask[] = active.map((t) => ({
+    id: t.id,
+    deadline: new Date(t.deadline),
+    remainingMinutes: Math.max(0, t.estimatedMinutes - (plannedByTask.get(t.id) ?? 0)),
+    priorityRank: PRIORITY_RANK[t.priority],
+    splittable: t.splittable,
+    earliestStartAt: t.earliestStartAt ? new Date(t.earliestStartAt) : undefined,
+    minBlockMinutes: t.minBlockMinutes,
+    maxBlockMinutes: t.maxBlockMinutes,
+    preferredWindows: (t.preferredWindows ?? []).map((w) => ({
+      weekday: w.weekday,
+      startMin: minutesOf(w.startTime),
+      endMin: minutesOf(w.endTime),
+    })),
+  }))
+
+  const windowsByWeekday = new Map<number, Array<[number, number]>>()
+  for (const w of state.availability) {
+    const list = windowsByWeekday.get(w.weekday) ?? []
+    list.push([minutesOf(w.startTime), minutesOf(w.endTime)])
+    windowsByWeekday.set(w.weekday, list)
+  }
+
+  const result = scheduleEngine({
+    now,
+    tasks: engineTasks,
+    windowsByWeekday,
+    busy,
+    initialDayLoad: dayLoad,
+    dailyMaxMinutes: capMinutes,
+  })
 
   const warnings: ScheduleWarning[] = []
   const unscheduled: string[] = []
-  const created: ScheduledBlock[] = []
-  const used = new Set<number>()
-
-  const active = [...state.tasks]
-    .filter((t) => t.status === 'active')
-    .sort(
-      (a, b) =>
-        a.deadline.localeCompare(b.deadline) ||
-        PRIORITY_RANK[a.priority] - PRIORITY_RANK[b.priority] ||
-        a.id.localeCompare(b.id),
-    )
-
-  for (const task of active) {
-    if (!task.estimatedMinutes) {
-      warnings.push({
-        type: 'missing_estimate',
-        taskId: task.id,
-        message: `任务「${task.title}」缺少预计时长，已跳过`,
-      })
-      unscheduled.push(task.id)
-      continue
-    }
-    const deadline = new Date(task.deadline)
-    if (deadline > horizonEnd) {
+  const overloadedDays = new Set<string>()
+  for (const w of result.warnings) {
+    const title = titles.get(w.taskId) ?? w.taskId
+    if (w.kind === 'beyond_horizon') {
       warnings.push({
         type: 'deadline_unreachable',
-        taskId: task.id,
-        message: `任务「${task.title}」截止日超出 ${HORIZON_DAYS} 天调度范围，仅安排范围内时段`,
+        taskId: w.taskId,
+        message: `任务「${title}」截止日超出 ${MAX_HORIZON_DAYS} 天调度范围，仅安排范围内时段`,
       })
-    }
-
-    const plannedMinutes = kept
-      .filter((b) => b.taskId === task.id)
-      .reduce(
-        (sum, b) => sum + (new Date(b.endAt).getTime() - new Date(b.startAt).getTime()) / 60_000,
-        0,
-      )
-    const neededHours = Math.ceil(Math.max(0, task.estimatedMinutes - plannedMinutes) / 60)
-    if (neededHours === 0) continue
-
-    const earliest = task.earliestStartAt ? new Date(task.earliestStartAt) : null
-    const eligible: number[] = []
-    free.forEach((slot, index) => {
-      if (used.has(index)) return
-      if (earliest && slot < earliest) return
-      if (addHours(slot, 1) > deadline) return
-      eligible.push(index)
-    })
-
-    const matchesPreferred = (slot: Date): boolean =>
-      (task.preferredWindows ?? []).some(
-        (w) =>
-          w.weekday === slot.getDay() &&
-          slot.getHours() * 60 >= minutesOf(w.startTime) &&
-          (slot.getHours() + 1) * 60 <= minutesOf(w.endTime),
-      )
-
-    let picks: number[] = []
-    if (!task.splittable && neededHours > 1) {
-      // non-splittable tasks need one contiguous run of hours
-      for (let i = 0; i + neededHours <= eligible.length; i++) {
-        const run = eligible.slice(i, i + neededHours)
-        const contiguous = run.every(
-          (idx, k) => k === 0 || free[idx].getTime() - free[run[k - 1]].getTime() === 3_600_000,
-        )
-        if (contiguous) {
-          picks = run
-          break
-        }
-      }
-      if (!picks.length) {
-        warnings.push({
-          type: 'insufficient_time',
-          taskId: task.id,
-          message: `任务「${task.title}」不可拆分，且截止前找不到连续 ${neededHours} 小时空档`,
-        })
-        unscheduled.push(task.id)
-        continue
-      }
-    } else {
-      let ordered = eligible
-      if (task.preferredWindows?.length) {
-        const preferred = eligible.filter((i) => matchesPreferred(free[i]))
-        const rest = eligible.filter((i) => !matchesPreferred(free[i]))
-        ordered = [...preferred, ...rest]
-      }
-      picks = ordered.slice(0, neededHours)
-    }
-
-    if (!picks.length) {
-      warnings.push({
-        type: 'deadline_unreachable',
-        taskId: task.id,
-        message: `任务「${task.title}」在截止前没有可用空档`,
-      })
-      unscheduled.push(task.id)
-      continue
-    }
-    if (picks.length < neededHours) {
+    } else if (w.kind === 'partial') {
       warnings.push({
         type: 'insufficient_time',
-        taskId: task.id,
-        message: `任务「${task.title}」只安排了 ${picks.length}/${neededHours} 小时`,
+        taskId: w.taskId,
+        message: `任务「${title}」只安排了 ${w.placedMinutes}/${w.requestedMinutes} 分钟，截止前即使超载也没有更多可用时间`,
       })
-    }
-    for (const index of picks) {
-      used.add(index)
-      created.push({
-        id: newId('block'),
-        taskId: task.id,
-        startAt: free[index].toISOString(),
-        endAt: addHours(free[index], 1).toISOString(),
-        locked: false,
-        source: 'auto',
-        done: false,
+    } else if (w.kind === 'no_slot') {
+      unscheduled.push(w.taskId)
+      warnings.push({
+        type: 'deadline_unreachable',
+        taskId: w.taskId,
+        message: `任务「${title}」在截止前没有可用空档`,
       })
-    }
-  }
-
-  const allBlocks = [...kept, ...created].sort((a, b) => a.startAt.localeCompare(b.startAt))
-
-  // overloaded days
-  const hoursByDay = new Map<string, number>()
-  for (const b of allBlocks) {
-    const key = format(new Date(b.startAt), 'yyyy-MM-dd')
-    const hours = (new Date(b.endAt).getTime() - new Date(b.startAt).getTime()) / 3_600_000
-    hoursByDay.set(key, (hoursByDay.get(key) ?? 0) + hours)
-  }
-  for (const [day, hours] of hoursByDay) {
-    if (hours > state.settings.dailyMaxPlannedHours) {
+    } else if (w.kind === 'non_splittable') {
+      unscheduled.push(w.taskId)
+      warnings.push({
+        type: 'insufficient_time',
+        taskId: w.taskId,
+        message: `任务「${title}」不可拆分，且截止前找不到足够长的连续空档`,
+      })
+    } else if (w.kind === 'overload' && w.day) {
+      overloadedDays.add(w.day)
       warnings.push({
         type: 'overloaded_day',
-        message: `${day} 计划 ${hours.toFixed(1)} 小时，超过每日上限 ${state.settings.dailyMaxPlannedHours} 小时`,
+        taskId: w.taskId,
+        message: `为按期完成「${title}」，${w.day} 在每日上限 ${state.settings.dailyMaxPlannedHours} 小时之外额外安排 ${w.extraMinutes} 分钟`,
+      })
+    }
+  }
+
+  const created: ScheduledBlock[] = result.blocks.map((b) => ({
+    id: newId('block'),
+    taskId: b.taskId,
+    startAt: b.startAt.toISOString(),
+    endAt: b.endAt.toISOString(),
+    locked: false,
+    source: 'local_auto',
+    done: false,
+  }))
+  const allBlocks = [...kept, ...created].sort((a, b) => a.startAt.localeCompare(b.startAt))
+
+  // days overloaded purely by manual/locked blocks
+  const minutesByDay = new Map<string, number>()
+  for (const b of allBlocks) {
+    if (b.done) continue
+    const key = format(new Date(b.startAt), 'yyyy-MM-dd')
+    minutesByDay.set(key, (minutesByDay.get(key) ?? 0) + blockMinutes(b))
+  }
+  for (const [day, minutes] of [...minutesByDay.entries()].sort()) {
+    if (minutes > capMinutes && !overloadedDays.has(day)) {
+      warnings.push({
+        type: 'overloaded_day',
+        message: `${day} 计划 ${(minutes / 60).toFixed(1)} 小时，超过每日上限 ${state.settings.dailyMaxPlannedHours} 小时`,
       })
     }
   }
@@ -469,11 +503,154 @@ export async function regenerateSchedule(): Promise<ScheduleSummary> {
     }
   }
 
-  save({ ...state, blocks: allBlocks })
-  return delay({
-    createdBlocks: created.length,
-    removedBlocks: removedIds.size,
-    unscheduledTaskIds: unscheduled,
-    warnings,
+  const placedByTask = new Map(result.stats.map((s) => [s.taskId, s]))
+  let totalUnscheduled = 0
+  const taskStats: TaskScheduleStat[] = active.map((t) => {
+    const planned = plannedByTask.get(t.id) ?? 0
+    const stat = placedByTask.get(t.id)
+    const placed = stat?.placedMinutes ?? 0
+    const remaining = stat
+      ? stat.remainingMinutes
+      : Math.max(0, t.estimatedMinutes - planned)
+    totalUnscheduled += remaining
+    return {
+      taskId: t.id,
+      scheduledMinutes: planned + placed,
+      unscheduledMinutes: remaining,
+    }
   })
+
+  return {
+    state: { ...state, blocks: allBlocks },
+    summary: {
+      createdBlocks: created.length,
+      removedBlocks: removedIds.size,
+      unscheduledTaskIds: unscheduled,
+      totalUnscheduledMinutes: totalUnscheduled,
+      taskStats,
+      warnings,
+    },
+  }
+}
+
+export async function regenerateSchedule(): Promise<ScheduleSummary> {
+  const { state, summary } = runScheduler(load())
+  save(state)
+  return delay(summary)
+}
+
+// ---- manual plans ----
+
+function manualPlanWarnings(
+  state: MockState,
+  task: Task,
+  block: ScheduledBlock,
+): ScheduleWarning[] {
+  const warnings: ScheduleWarning[] = []
+  const start = new Date(block.startAt)
+  const end = new Date(block.endAt)
+
+  for (const event of state.fixedEvents) {
+    if (overlaps(start, end, new Date(event.startAt), new Date(event.endAt))) {
+      warnings.push({
+        type: 'overlap',
+        taskId: task.id,
+        message: `手动计划与固定事件「${event.title}」重叠`,
+      })
+    }
+  }
+  for (const other of state.blocks) {
+    if (other.id === block.id) continue
+    if (overlaps(start, end, new Date(other.startAt), new Date(other.endAt))) {
+      warnings.push({
+        type: 'overlap',
+        taskId: task.id,
+        message: `手动计划与已有时间块重叠：${format(new Date(other.startAt), 'MM-dd HH:mm')}–${format(new Date(other.endAt), 'HH:mm')}`,
+      })
+    }
+  }
+
+  const startMin = start.getHours() * 60 + start.getMinutes()
+  const sameDay = format(start, 'yyyy-MM-dd') === format(end, 'yyyy-MM-dd')
+  const endMin = sameDay ? end.getHours() * 60 + end.getMinutes() : 24 * 60
+  const dayWindows = state.availability.length
+    ? state.availability
+        .filter((w) => w.weekday === start.getDay())
+        .map((w): [number, number] => [minutesOf(w.startTime), minutesOf(w.endTime)])
+    : [[9 * 60, 17 * 60] as [number, number]]
+  if (!dayWindows.some(([ws, we]) => ws <= startMin && endMin <= we)) {
+    warnings.push({
+      type: 'outside_availability',
+      taskId: task.id,
+      message: '手动计划超出当天的可用时间窗口',
+    })
+  }
+
+  if (end > new Date(task.deadline)) {
+    warnings.push({
+      type: 'past_deadline',
+      taskId: task.id,
+      message: `手动计划晚于任务「${task.title}」的截止时间`,
+    })
+  }
+
+  const dayKey = format(start, 'yyyy-MM-dd')
+  const dayMinutes =
+    state.blocks
+      .filter(
+        (b) =>
+          b.id !== block.id && !b.done && format(new Date(b.startAt), 'yyyy-MM-dd') === dayKey,
+      )
+      .reduce((sum, b) => sum + blockMinutes(b), 0) + blockMinutes(block)
+  const capMinutes = state.settings.dailyMaxPlannedHours * 60
+  if (dayMinutes > capMinutes) {
+    warnings.push({
+      type: 'overloaded_day',
+      taskId: task.id,
+      message: `${dayKey} 计划 ${(dayMinutes / 60).toFixed(1)} 小时，超过每日上限 ${state.settings.dailyMaxPlannedHours} 小时`,
+    })
+  }
+  return warnings
+}
+
+export async function createPlan(input: PlanCreate): Promise<PlanCreateResult> {
+  const state = load()
+  const start = new Date(input.startAt)
+  const end = new Date(input.endAt)
+  if (!(start < end)) throw new Error('结束时间必须晚于开始时间')
+  if (!input.taskId === !input.newTask) {
+    throw new Error('请选择现有任务或填写新任务（二选一）')
+  }
+
+  let task: Task
+  let tasks = state.tasks
+  if (input.taskId) {
+    const existing = tasks.find((t) => t.id === input.taskId)
+    if (!existing) throw new Error(`任务 ${input.taskId} 不存在`)
+    task = existing
+  } else {
+    task = {
+      ...input.newTask!,
+      id: newId('task'),
+      status: input.newTask!.status ?? 'active',
+      createdAt: new Date().toISOString(),
+    }
+    tasks = [...tasks, task]
+  }
+
+  const block: ScheduledBlock = {
+    id: newId('block'),
+    taskId: task.id,
+    startAt: start.toISOString(),
+    endAt: end.toISOString(),
+    locked: true,
+    source: 'manual',
+    done: false,
+    notes: input.notes,
+  }
+  const withPlan: MockState = { ...state, tasks, blocks: [...state.blocks, block] }
+  const warnings = manualPlanWarnings(withPlan, task, block)
+  const { state: nextState, summary } = runScheduler(withPlan)
+  save(nextState)
+  return delay({ task, block, warnings, summary })
 }

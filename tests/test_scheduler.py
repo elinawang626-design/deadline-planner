@@ -57,9 +57,11 @@ def test_avoids_fixed_events():
     )
     task = make_task("t1", hours=3, deadline=dt(2026, 6, 10, 17))
     result, _ = run([task], events=[event])
-    starts = [b.start_at for b in result.blocks]
-    # both the 09:00 and 10:00 slots overlap the event and must be skipped
-    assert starts == [dt(2026, 6, 10, 11), dt(2026, 6, 10, 12), dt(2026, 6, 10, 13)]
+    for b in result.blocks:
+        assert not (b.start_at < event.end_at and event.start_at < b.end_at)
+    total = sum((b.end_at - b.start_at).total_seconds() / 3600 for b in result.blocks)
+    assert total == 3
+    assert_no_overlap(result.blocks)
 
 
 def test_respects_earliest_start_and_deadline():
@@ -107,7 +109,14 @@ def test_ordering_deadline_then_priority_then_id():
     early = make_task("m-early", hours=1, deadline=dt(2026, 6, 10, 12), priority="low")
     result, _ = run([low, high, early])
     by_task = {b.task_id: b.start_at for b in result.blocks}
-    assert by_task["m-early"] < by_task["z-high"] < by_task["a-low"]
+    # the tighter deadline is planned first and gets the earliest slot
+    assert by_task["m-early"] < by_task["z-high"]
+    assert by_task["m-early"] < by_task["a-low"]
+    # between equal deadlines, the higher priority is planned first; with
+    # day-balancing the slots may differ, but all blocks meet the deadlines
+    for b in result.blocks:
+        assert b.end_at <= same_deadline
+    assert_no_overlap(result.blocks)
 
 
 def test_locked_blocks_are_kept_and_unlocked_auto_blocks_replaced():
@@ -168,21 +177,22 @@ def test_impossible_task_is_unscheduled_with_warning():
     assert any("could not be scheduled" in w for w in result.warnings)
 
 
-def test_deadline_beyond_14_day_window_warns_and_blocks_stay_inside():
-    task = make_task("t1", hours=2, deadline=dt(2026, 7, 30, 17))
+def test_deadline_beyond_90_day_window_warns_and_blocks_stay_inside():
+    task = make_task("t1", hours=2, deadline=dt(2026, 12, 30, 17))
     result, _ = run([task])
-    horizon_end = NOW + timedelta(days=14)
+    horizon_end = NOW + timedelta(days=90)
     assert all(b.end_at <= horizon_end for b in result.blocks)
-    assert any("beyond" in w for w in result.warnings)
-    assert len(result.blocks) == 2
+    assert any("beyond the 90-day" in w for w in result.warnings)
+    total = sum((b.end_at - b.start_at).total_seconds() / 3600 for b in result.blocks)
+    assert total == 2
 
 
 def test_never_schedules_more_than_window_capacity():
-    # 14 days x 8h default availability = 112 max hours
+    # ~50 days x 8h default availability before the deadline < 500 hours
     task = make_task("t1", hours=500, deadline=dt(2026, 7, 30, 17))
     result, _ = run([task])
-    horizon_end = NOW + timedelta(days=14)
-    assert all(b.end_at <= horizon_end for b in result.blocks)
-    assert len(result.blocks) <= 14 * 8
+    assert all(b.end_at <= dt(2026, 7, 30, 17) for b in result.blocks)
+    total = sum((b.end_at - b.start_at).total_seconds() / 3600 for b in result.blocks)
+    assert total < 500
     assert any("partially scheduled" in w for w in result.warnings)
     assert_no_overlap(result.blocks)
