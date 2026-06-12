@@ -1,4 +1,5 @@
 import json
+from datetime import datetime, timezone
 
 import pytest
 from typer.testing import CliRunner
@@ -7,6 +8,10 @@ from planner import db
 from planner.cli import app
 
 runner = CliRunner()
+
+# Scheduling starts from "now", so block packing depends on the wall clock.
+# Freeze it near the fixture deadlines to keep these smoke tests deterministic.
+FROZEN_NOW = datetime(2098, 12, 28, 8, 0, tzinfo=timezone.utc)
 
 LLM_OUTPUT = {
     "tasks": [
@@ -33,6 +38,16 @@ LLM_OUTPUT = {
 @pytest.fixture(autouse=True)
 def utc_tz(monkeypatch):
     monkeypatch.setenv("TZ", "UTC")
+
+
+@pytest.fixture(autouse=True)
+def frozen_now(monkeypatch):
+    class FrozenDatetime(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return FROZEN_NOW.astimezone(tz) if tz else FROZEN_NOW.replace(tzinfo=None)
+
+    monkeypatch.setattr("planner.cli.datetime", FrozenDatetime)
 
 
 @pytest.fixture()
