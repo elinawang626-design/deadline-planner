@@ -44,7 +44,7 @@ export function WeekView({
         const nearCap =
           !overloaded && plannedHours >= settings.dailyMaxPlannedHours * NEAR_CAP_RATIO
         const due = tasks.filter(
-          (t) => t.status === 'active' && isSameDay(parseISO(t.deadline), day),
+          (t) => t.status === 'active' && !!t.deadline && isSameDay(parseISO(t.deadline), day),
         )
         const events = fixedEvents.filter((e) => isSameDay(parseISO(e.startAt), day))
         return (

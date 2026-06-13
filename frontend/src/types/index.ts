@@ -19,7 +19,8 @@ export interface Task {
   title: string
   description?: string
   type: TaskType
-  deadline: string // ISO 8601
+  /** ISO 8601; null/undefined means no deadline (excluded from auto-scheduling). */
+  deadline?: string | null
   estimatedMinutes: number
   earliestStartAt?: string // ISO 8601
   priority: Priority
@@ -63,6 +64,7 @@ export type ScheduleWarningType =
   | 'overloaded_day'
   | 'overlap'
   | 'missing_estimate'
+  | 'missing_deadline'
   | 'outside_availability'
   | 'past_deadline'
 

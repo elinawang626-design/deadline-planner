@@ -28,10 +28,12 @@ export function TaskForm({ initial, initialDeadlineDate, onClose }: TaskFormProp
   const [description, setDescription] = useState(initial?.description ?? '')
   const [type, setType] = useState<TaskType>(initial?.type ?? 'assignment')
   const [deadlineDate, setDeadlineDate] = useState(
-    initial ? format(parseISO(initial.deadline), 'yyyy-MM-dd') : (initialDeadlineDate ?? ''),
+    initial?.deadline
+      ? format(parseISO(initial.deadline), 'yyyy-MM-dd')
+      : (initialDeadlineDate ?? ''),
   )
   const [deadlineTime, setDeadlineTime] = useState(
-    initial ? format(parseISO(initial.deadline), 'HH:mm') : '18:00',
+    initial?.deadline ? format(parseISO(initial.deadline), 'HH:mm') : '18:00',
   )
   const [hours, setHours] = useState(
     initial ? String(Math.floor(initial.estimatedMinutes / 60)) : '1',
@@ -61,13 +63,14 @@ export function TaskForm({ initial, initialDeadlineDate, onClose }: TaskFormProp
     mutationFn: async () => {
       const estimatedMinutes = Number(hours || 0) * 60 + Number(minutes || 0)
       if (!title.trim()) throw new Error('标题不能为空')
-      if (!deadlineDate) throw new Error('请选择截止日期')
       if (estimatedMinutes <= 0) throw new Error('预计时长必须大于 0')
       const payload: TaskCreate = {
         title: title.trim(),
         description: description.trim() || undefined,
         type,
-        deadline: new Date(`${deadlineDate}T${deadlineTime || '23:59'}`).toISOString(),
+        deadline: deadlineDate
+          ? new Date(`${deadlineDate}T${deadlineTime || '23:59'}`).toISOString()
+          : null,
         estimatedMinutes,
         earliestStartAt: earliestStart ? new Date(earliestStart).toISOString() : undefined,
         priority,
@@ -128,7 +131,7 @@ export function TaskForm({ initial, initialDeadlineDate, onClose }: TaskFormProp
           </select>
         </div>
         <div>
-          <label className={labelCls}>截止日期 *</label>
+          <label className={labelCls}>截止日期（可选，留空则不自动排程）</label>
           <input type="date" className={inputCls} value={deadlineDate} onChange={(e) => setDeadlineDate(e.target.value)} />
         </div>
         <div>

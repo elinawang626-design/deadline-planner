@@ -45,7 +45,8 @@ class Task(WebModel):
     title: str
     description: Optional[str] = None
     type: TaskType = "other"
-    deadline: datetime
+    # No deadline means the task is excluded from auto-scheduling.
+    deadline: Optional[datetime] = None
     estimatedMinutes: int = Field(gt=0)
     earliestStartAt: Optional[datetime] = None
     priority: Priority = "medium"
@@ -66,7 +67,7 @@ class TaskCreate(WebModel):
     title: str
     description: Optional[str] = None
     type: TaskType = "other"
-    deadline: datetime
+    deadline: Optional[datetime] = None
     estimatedMinutes: int = Field(gt=0)
     earliestStartAt: Optional[datetime] = None
     priority: Priority = "medium"

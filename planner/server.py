@@ -178,7 +178,9 @@ def _regenerate(conn: sqlite3.Connection) -> ScheduleSummary:
 
     active = [t for t in tasks if t.status == "active"]
     titles = {t.id: t.title for t in tasks}
-    engine_tasks = [_engine_task(t, planned_by_task.get(t.id, 0)) for t in active]
+    # Tasks without a deadline are kept but never auto-scheduled.
+    schedulable = [t for t in active if t.deadline is not None]
+    engine_tasks = [_engine_task(t, planned_by_task.get(t.id, 0)) for t in schedulable]
 
     result = engine_schedule(
         now=now,
@@ -190,7 +192,15 @@ def _regenerate(conn: sqlite3.Connection) -> ScheduleSummary:
         daily_max_minutes=cap_minutes,
     )
 
-    warnings: list[ScheduleWarning] = []
+    warnings: list[ScheduleWarning] = [
+        ScheduleWarning(
+            type="missing_deadline",
+            taskId=t.id,
+            message=f"任务「{t.title}」没有截止日期，未参与自动排程",
+        )
+        for t in active
+        if t.deadline is None
+    ]
     unscheduled: list[str] = []
     overloaded_days: set[date] = set()
     for w in result.warnings:
@@ -527,7 +537,7 @@ def _manual_plan_warnings(
             )
         )
 
-    if block.endAt > task.deadline:
+    if task.deadline and block.endAt > task.deadline:
         warnings.append(
             ScheduleWarning(
                 type="past_deadline",

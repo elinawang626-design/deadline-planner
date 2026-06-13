@@ -316,7 +316,7 @@ const MODE_RULES: Record<PlanMode, string> = {
 
 const PLAN_SCHEMA_TEXT = `{
   "schedule_strategy": "ai_blocks | local_auto（可选）",
-  "tasks": [{"id": "必填", "title": "新任务必填", "deadline": "新任务必填，ISO 8601 带偏移",
+  "tasks": [{"id": "必填", "title": "新任务必填", "deadline": "可选，ISO 8601 带偏移；省略则任务不参与自动排程",
              "estimated_minutes": "新任务必填，正整数", "priority": "low|medium|high|urgent",
              "earliest_start_at": "可选", "splittable": "可选布尔", "type": "可选", "notes": "可选"}],
   "availability_rules": [{"id": "必填", "weekday": "0-6（0=周日）", "start_time": "HH:MM", "end_time": "HH:MM"}],
@@ -385,7 +385,7 @@ export function buildPrompt(
     '- 顶层字段均可省略；省略的记录保持不变，不要重复返回未修改的记录。',
     '- 所有 datetime 必须是带 UTC 偏移的 ISO 8601。',
     '- 新任务必须自带唯一 id；scheduled_blocks 通过 task_id 引用任务（可以引用同一回复中新建的任务）。',
-    '- 每个时间块必须：避开固定事件、不可用时间和受保护时间块；不早于任务 earliest_start_at；在任务 deadline 前结束；不与同批次其他时间块重叠；不早于当前时间。',
+    '- 每个时间块必须：避开固定事件、不可用时间和受保护时间块；不早于任务 earliest_start_at；在任务 deadline 前结束（任务无 deadline 时不受此限）；不与同批次其他时间块重叠；不早于当前时间。',
     '- 尽量遵守每日计划上限；超出会在预览中产生警告。',
     '- 不要发明字段；未知字段会被拒绝。',
     '',
@@ -459,7 +459,7 @@ export function buildScenario(
     seenTaskIds.add(item.id)
     const existing = tasksById.get(item.id)
     if (!existing) {
-      const missing = (['title', 'deadline', 'estimated_minutes'] as const).filter(
+      const missing = (['title', 'estimated_minutes'] as const).filter(
         (name) => item[name] === undefined,
       )
       if (missing.length) {
@@ -470,7 +470,7 @@ export function buildScenario(
         id: item.id,
         title: item.title!,
         type: item.type ?? 'other',
-        deadline: item.deadline!,
+        deadline: item.deadline,
         estimatedMinutes: item.estimated_minutes!,
         earliestStartAt: item.earliest_start_at,
         priority: item.priority ?? 'medium',
@@ -861,7 +861,7 @@ export function buildScenario(
       continue
     }
     if (start < now) errors.push(`${label} 早于当前时间`)
-    if (end > new Date(task.deadline)) {
+    if (task.deadline && end > new Date(task.deadline)) {
       errors.push(`${label} 晚于任务「${task.title}」的截止时间`)
     }
     if (task.earliestStartAt && start < new Date(task.earliestStartAt)) {

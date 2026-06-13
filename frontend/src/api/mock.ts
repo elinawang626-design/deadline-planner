@@ -388,9 +388,11 @@ function runScheduler(state: MockState): { state: MockState; summary: ScheduleSu
 
   const active = state.tasks.filter((t) => t.status === 'active')
   const titles = new Map(state.tasks.map((t) => [t.id, t.title]))
-  const engineTasks: EngineTask[] = active.map((t) => ({
+  // Tasks without a deadline are kept but never auto-scheduled.
+  const schedulable = active.filter((t) => t.deadline)
+  const engineTasks: EngineTask[] = schedulable.map((t) => ({
     id: t.id,
-    deadline: new Date(t.deadline),
+    deadline: new Date(t.deadline!),
     remainingMinutes: Math.max(0, t.estimatedMinutes - (plannedByTask.get(t.id) ?? 0)),
     priorityRank: PRIORITY_RANK[t.priority],
     splittable: t.splittable,
@@ -420,7 +422,13 @@ function runScheduler(state: MockState): { state: MockState; summary: ScheduleSu
     dailyMaxMinutes: capMinutes,
   })
 
-  const warnings: ScheduleWarning[] = []
+  const warnings: ScheduleWarning[] = active
+    .filter((t) => !t.deadline)
+    .map((t) => ({
+      type: 'missing_deadline' as const,
+      taskId: t.id,
+      message: `任务「${t.title}」没有截止日期，未参与自动排程`,
+    }))
   const unscheduled: string[] = []
   const overloadedDays = new Set<string>()
   for (const w of result.warnings) {
@@ -586,7 +594,7 @@ function manualPlanWarnings(
     })
   }
 
-  if (end > new Date(task.deadline)) {
+  if (task.deadline && end > new Date(task.deadline)) {
     warnings.push({
       type: 'past_deadline',
       taskId: task.id,

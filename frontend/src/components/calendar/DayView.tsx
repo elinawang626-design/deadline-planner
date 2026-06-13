@@ -65,7 +65,9 @@ export function DayView({ date, blocks, tasks, fixedEvents, onBlockClick }: DayV
         {dayBlocks.map((block) => {
           const task = taskById.get(block.taskId)
           const p = position(block.startAt, block.endAt)
-          const overDeadline = task ? parseISO(task.deadline) < parseISO(block.endAt) : false
+          const overDeadline = task?.deadline
+            ? parseISO(task.deadline) < parseISO(block.endAt)
+            : false
           return (
             <button
               key={block.id}

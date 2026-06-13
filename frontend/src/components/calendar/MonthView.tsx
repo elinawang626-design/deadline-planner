@@ -43,7 +43,7 @@ export function MonthView({
             0,
           )
           const dueCount = tasks.filter(
-            (t) => t.status === 'active' && isSameDay(parseISO(t.deadline), day),
+            (t) => t.status === 'active' && !!t.deadline && isSameDay(parseISO(t.deadline), day),
           ).length
           const overloaded = plannedHours > settings.dailyMaxPlannedHours
           const nearCap =

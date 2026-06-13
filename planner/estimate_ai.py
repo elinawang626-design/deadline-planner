@@ -170,7 +170,7 @@ def build_estimate_prompt(
         "title": task.title,
         "description": task.description,
         "type": task.type,
-        "deadline": task.deadline.isoformat(),
+        "deadline": task.deadline.isoformat() if task.deadline else None,
         "current_estimated_minutes": task.estimatedMinutes,
         "priority": task.priority,
         "notes": task.notes,

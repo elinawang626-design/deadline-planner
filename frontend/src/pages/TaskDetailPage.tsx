@@ -47,7 +47,8 @@ export default function TaskDetailPage() {
   const remaining = Math.max(0, task.estimatedMinutes - actual)
   const done = checklist.filter((i) => i.completed).length
   const latestEstimate = estimates[0]
-  const overdue = task.status === 'active' && parseISO(task.deadline) < new Date()
+  const overdue =
+    task.status === 'active' && !!task.deadline && parseISO(task.deadline) < new Date()
 
   return (
     <div className="mx-auto flex max-w-3xl flex-col gap-4">
@@ -65,7 +66,9 @@ export default function TaskDetailPage() {
         </div>
         {task.description && <p className="mt-1 text-sm text-gray-600">{task.description}</p>}
         <p className={`mt-1 text-xs ${overdue ? 'font-medium text-red-600' : 'text-gray-500'}`}>
-          截止 {format(parseISO(task.deadline), 'yyyy/M/d HH:mm')}
+          {task.deadline
+            ? `截止 ${format(parseISO(task.deadline), 'yyyy/M/d HH:mm')}`
+            : '无截止日期（不参与自动排程）'}
           {overdue && '（已逾期）'}
         </p>
       </div>

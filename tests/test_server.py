@@ -49,6 +49,25 @@ def test_task_rejects_extra_fields(client):
     assert client.post("/api/tasks", json=bad).status_code == 422
 
 
+def test_task_without_deadline_is_valid_but_not_scheduled(client):
+    body = make_task_body()
+    del body["deadline"]
+    created = client.post("/api/tasks", json=body).json()
+    assert created["deadline"] is None
+
+    summary = client.post("/api/schedule/regenerate").json()
+    assert client.get("/api/schedule/blocks").json() == []
+    assert any(
+        w["type"] == "missing_deadline" and w["taskId"] == created["id"]
+        for w in summary["warnings"]
+    )
+
+    # setting a deadline later makes it schedulable again
+    client.patch(f"/api/tasks/{created['id']}", json={"deadline": iso(future(days=5))})
+    client.post("/api/schedule/regenerate")
+    assert client.get("/api/schedule/blocks").json() != []
+
+
 def test_regenerate_creates_blocks_and_respects_lock(client):
     task = client.post("/api/tasks", json=make_task_body()).json()
     summary = client.post("/api/schedule/regenerate").json()

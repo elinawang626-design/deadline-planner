@@ -67,10 +67,11 @@ export function TaskList({ tasks, blocks, onEdit, tracking = {} }: TaskListProps
       case 'archived':
         return task.status === 'archived'
       case 'overdue':
-        return task.status === 'active' && parseISO(task.deadline) < now
+        return task.status === 'active' && !!task.deadline && parseISO(task.deadline) < now
       case 'week':
         return (
           task.status === 'active' &&
+          !!task.deadline &&
           parseISO(task.deadline) >= now &&
           parseISO(task.deadline) <= weekEnd
         )
@@ -119,7 +120,8 @@ export function TaskList({ tasks, blocks, onEdit, tracking = {} }: TaskListProps
         {visible.map((task) => {
           const scheduled = scheduledMinutes(task.id)
           const remaining = Math.max(0, task.estimatedMinutes - scheduled)
-          const overdue = task.status === 'active' && parseISO(task.deadline) < now
+          const overdue =
+            task.status === 'active' && !!task.deadline && parseISO(task.deadline) < now
           const taskBlocks = blocks
             .filter((b) => b.taskId === task.id)
             .sort((a, b) => a.startAt.localeCompare(b.startAt))
@@ -132,7 +134,9 @@ export function TaskList({ tasks, blocks, onEdit, tracking = {} }: TaskListProps
                 <span className="font-medium">{task.title}</span>
                 <span className="text-xs text-gray-400">{TYPE_LABELS[task.type]}</span>
                 <span className={`text-xs ${overdue ? 'font-medium text-red-600' : 'text-gray-500'}`}>
-                  截止 {format(parseISO(task.deadline), 'M/d HH:mm')}
+                  {task.deadline
+                    ? `截止 ${format(parseISO(task.deadline), 'M/d HH:mm')}`
+                    : '无截止（不自动排程）'}
                   {overdue && '（已逾期）'}
                 </span>
                 <span className="text-xs text-gray-400">{STATUS_LABELS[task.status]}</span>

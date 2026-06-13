@@ -62,12 +62,13 @@ export function PlanForm({ defaultDate, onClose }: PlanFormProps) {
       } else {
         const estimatedMinutes = Number(hours || 0) * 60 + Number(minutes || 0)
         if (!title.trim()) throw new Error('标题不能为空')
-        if (!deadlineDate) throw new Error('请选择截止日期')
         if (estimatedMinutes <= 0) throw new Error('预计时长必须大于 0')
         payload.newTask = {
           title: title.trim(),
           type: 'other',
-          deadline: new Date(`${deadlineDate}T${deadlineTime || '23:59'}`).toISOString(),
+          deadline: deadlineDate
+            ? new Date(`${deadlineDate}T${deadlineTime || '23:59'}`).toISOString()
+            : null,
           estimatedMinutes,
           priority,
           splittable,
@@ -122,7 +123,8 @@ export function PlanForm({ defaultDate, onClose }: PlanFormProps) {
               <option value="">请选择任务…</option>
               {activeTasks.map((t) => (
                 <option key={t.id} value={t.id}>
-                  {t.title}（截止 {format(new Date(t.deadline), 'M/d HH:mm')}）
+                  {t.title}
+                  {t.deadline ? `（截止 ${format(new Date(t.deadline), 'M/d HH:mm')}）` : '（无截止）'}
                 </option>
               ))}
             </select>
@@ -137,7 +139,7 @@ export function PlanForm({ defaultDate, onClose }: PlanFormProps) {
               <input autoFocus className={inputCls} value={title} onChange={(e) => setTitle(e.target.value)} />
             </div>
             <div>
-              <label className={labelCls}>截止日期 *</label>
+              <label className={labelCls}>截止日期（可选）</label>
               <input type="date" className={inputCls} value={deadlineDate} onChange={(e) => setDeadlineDate(e.target.value)} />
             </div>
             <div>

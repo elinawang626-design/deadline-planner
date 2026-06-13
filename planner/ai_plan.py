@@ -307,7 +307,7 @@ def build_plan_prompt(
         {
             "id": t.id,
             "title": t.title,
-            "deadline": t.deadline.isoformat(),
+            "deadline": t.deadline.isoformat() if t.deadline else None,
             "estimated_minutes": t.estimatedMinutes,
             "priority": t.priority,
             "earliest_start_at": t.earliestStartAt.isoformat() if t.earliestStartAt else None,
@@ -380,7 +380,7 @@ def build_plan_prompt(
 - 顶层字段：schedule_strategy、tasks、availability_rules、fixed_events、scheduled_blocks、deleted_ids，均可省略；省略的记录保持不变，不要重复返回未修改的记录。
 - 所有 datetime 必须是带 UTC 偏移的 ISO 8601。
 - 新任务必须自带唯一 id；scheduled_blocks 通过 task_id 引用任务（可以引用同一回复中新建的任务）。
-- 每个时间块必须：避开固定事件、不可用时间和受保护时间块；不早于任务 earliest_start_at；在任务 deadline 前结束；不与同批次其他时间块重叠；不早于当前时间。
+- 每个时间块必须：避开固定事件、不可用时间和受保护时间块；不早于任务 earliest_start_at；在任务 deadline 前结束（任务无 deadline 时不受此限）；不与同批次其他时间块重叠；不早于当前时间。
 - 尽量遵守每日计划上限；超出会在预览中产生警告。
 - 不要发明字段；未知字段会被拒绝。
 
@@ -458,7 +458,7 @@ def _task_changes(
         if existing is None:
             missing = [
                 name
-                for name in ("title", "deadline", "estimated_minutes")
+                for name in ("title", "estimated_minutes")
                 if provided.get(name) is None
             ]
             if missing:
@@ -938,7 +938,7 @@ def _validate_placements(
             continue
         if block.startAt < now:
             errors.append(f"{label} 早于当前时间")
-        if block.endAt > task.deadline:
+        if task.deadline and block.endAt > task.deadline:
             errors.append(f"{label} 晚于任务「{task.title}」的截止时间")
         if task.earliestStartAt and block.startAt < task.earliestStartAt:
             errors.append(f"{label} 早于任务「{task.title}」的允许开始时间")

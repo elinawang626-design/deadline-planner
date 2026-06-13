@@ -432,7 +432,9 @@ def _history_samples(conn: sqlite3.Connection, task: Task) -> list[estimate_ai.H
         ]
         likely = max(applied, key=lambda e: e.appliedAt).likelyMinutes if applied else None
         # Completion time isn't stored; "worked past the deadline" approximates overdue.
-        overdue = any(w.workedAt > other.deadline.date() for w in logs)
+        overdue = bool(other.deadline) and any(
+            w.workedAt > other.deadline.date() for w in logs
+        )
         samples.append(
             estimate_ai.HistorySample(
                 title=other.title,
