@@ -6,9 +6,11 @@ import { listBlocks } from '../api/schedule'
 import { trackingSummary } from '../api/track'
 import { TaskForm } from '../components/tasks/TaskForm'
 import { TaskList } from '../components/tasks/TaskList'
+import { useT } from '../i18n'
 import type { Task } from '../types'
 
 export default function TasksPage() {
+  const t = useT()
   const [searchParams, setSearchParams] = useSearchParams()
   const { data: tasks = [] } = useQuery({ queryKey: ['tasks'], queryFn: listTasks })
   const { data: blocks = [] } = useQuery({ queryKey: ['blocks'], queryFn: () => listBlocks() })
@@ -23,12 +25,12 @@ export default function TasksPage() {
   return (
     <div className="mx-auto max-w-5xl">
       <div className="mb-4 flex items-center justify-between">
-        <h2 className="text-lg font-semibold">任务</h2>
+        <h2 className="text-lg font-semibold">{t('nav.tasks')}</h2>
         <button
           onClick={() => setSearchParams({ new: '1' })}
           className="rounded-md bg-blue-600 px-3 py-1.5 text-sm text-white hover:bg-blue-700"
         >
-          ＋ 新建任务
+          {t('task.new')}
         </button>
       </div>
       <TaskList tasks={tasks} blocks={blocks} onEdit={setEditing} tracking={tracking} />

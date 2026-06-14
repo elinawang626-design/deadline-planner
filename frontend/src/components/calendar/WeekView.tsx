@@ -1,5 +1,6 @@
 import { addDays, format, isSameDay, isToday, parseISO } from 'date-fns'
 import { WEEKDAY_LABELS, priorityColor } from '../../lib/labels'
+import { useT } from '../../i18n'
 import type { FixedEvent, ScheduledBlock, Settings, Task } from '../../types'
 
 const NEAR_CAP_RATIO = 0.8
@@ -27,7 +28,8 @@ export function WeekView({
   onCreateTask,
   onCreatePlan,
 }: WeekViewProps) {
-  const taskById = new Map(tasks.map((t) => [t.id, t]))
+  const t = useT()
+  const taskById = new Map(tasks.map((task) => [task.id, task]))
   const days = Array.from({ length: 7 }, (_, i) => addDays(weekStart, i))
 
   return (
@@ -44,7 +46,7 @@ export function WeekView({
         const nearCap =
           !overloaded && plannedHours >= settings.dailyMaxPlannedHours * NEAR_CAP_RATIO
         const due = tasks.filter(
-          (t) => t.status === 'active' && !!t.deadline && isSameDay(parseISO(t.deadline), day),
+          (task) => task.status === 'active' && !!task.deadline && isSameDay(parseISO(task.deadline), day),
         )
         const events = fixedEvents.filter((e) => isSameDay(parseISO(e.startAt), day))
         return (
@@ -61,33 +63,33 @@ export function WeekView({
               </button>
               <button
                 onClick={() => onCreateTask(day)}
-                title="新建任务（截止日预填此日期）"
+                title={t('cal.newTaskTitle')}
                 className="ml-auto rounded px-1 text-xs text-gray-400 hover:bg-blue-50 hover:text-blue-600"
               >
-                ＋任务
+                {t('cal.addTask')}
               </button>
               <button
                 onClick={() => onCreatePlan(day)}
-                title="新建计划（日期预填此日期）"
+                title={t('cal.newPlanTitle')}
                 className="rounded px-1 text-xs text-gray-400 hover:bg-blue-50 hover:text-blue-600"
               >
-                ＋计划
+                {t('cal.addPlan')}
               </button>
             </div>
             <div className="mb-1 flex items-center gap-1 text-xs">
               <span className="text-gray-500">{plannedHours.toFixed(1)}h</span>
               {overloaded && (
                 <span className="rounded bg-red-100 px-1 text-red-700">
-                  超载 +{(plannedHours - settings.dailyMaxPlannedHours).toFixed(1)}h
+                  {t('weekView.overload', { hours: (plannedHours - settings.dailyMaxPlannedHours).toFixed(1) })}
                 </span>
               )}
               {nearCap && (
-                <span className="rounded bg-amber-100 px-1 text-amber-700">接近上限</span>
+                <span className="rounded bg-amber-100 px-1 text-amber-700">{t('weekView.nearCap')}</span>
               )}
             </div>
-            {due.map((t) => (
-              <div key={t.id} className="mb-1 truncate rounded bg-rose-50 px-1 text-xs text-rose-700" title={t.title}>
-                📌 截止：{t.title}
+            {due.map((task) => (
+              <div key={task.id} className="mb-1 truncate rounded bg-rose-50 px-1 text-xs text-rose-700" title={task.title}>
+                {t('weekView.due', { title: task.title })}
               </div>
             ))}
             {events.map((e) => (

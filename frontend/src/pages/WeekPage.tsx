@@ -10,11 +10,13 @@ import { WeekView } from '../components/calendar/WeekView'
 import { BlockEditModal } from '../components/schedule/BlockEditModal'
 import { TaskForm } from '../components/tasks/TaskForm'
 import { PlanForm } from '../components/plans/PlanForm'
-import type { ScheduledBlock } from '../types'
+import { useT } from '../i18n'
+import { DEFAULT_SETTINGS, type ScheduledBlock } from '../types'
 
 const navBtn = 'rounded-md border border-gray-300 px-2 py-1 text-sm hover:bg-gray-50'
 
 export default function WeekPage() {
+  const t = useT()
   const navigate = useNavigate()
   const currentDate = useUI((s) => s.currentDate)
   const setCurrentDate = useUI((s) => s.setCurrentDate)
@@ -25,7 +27,7 @@ export default function WeekPage() {
     queryKey: ['fixed-events'],
     queryFn: listFixedEvents,
   })
-  const { data: settings = { dailyMaxPlannedHours: 6 } } = useQuery({
+  const { data: settings = DEFAULT_SETTINGS } = useQuery({
     queryKey: ['settings'],
     queryFn: getSettings,
   })
@@ -36,9 +38,9 @@ export default function WeekPage() {
   return (
     <div className="mx-auto max-w-6xl">
       <div className="mb-4 flex items-center gap-2">
-        <button onClick={() => setCurrentDate(format(addDays(weekStart, -7), 'yyyy-MM-dd'))} className={navBtn} aria-label="上一周">←</button>
-        <button onClick={() => setCurrentDate(format(new Date(), 'yyyy-MM-dd'))} className={navBtn}>本周</button>
-        <button onClick={() => setCurrentDate(format(addDays(weekStart, 7), 'yyyy-MM-dd'))} className={navBtn} aria-label="下一周">→</button>
+        <button onClick={() => setCurrentDate(format(addDays(weekStart, -7), 'yyyy-MM-dd'))} className={navBtn} aria-label={t('weekPage.prevWeek')}>←</button>
+        <button onClick={() => setCurrentDate(format(new Date(), 'yyyy-MM-dd'))} className={navBtn}>{t('weekPage.thisWeek')}</button>
+        <button onClick={() => setCurrentDate(format(addDays(weekStart, 7), 'yyyy-MM-dd'))} className={navBtn} aria-label={t('weekPage.nextWeek')}>→</button>
         <h2 className="ml-2 text-lg font-semibold">
           {format(weekStart, 'M/d')} – {format(addDays(weekStart, 6), 'M/d')}
         </h2>

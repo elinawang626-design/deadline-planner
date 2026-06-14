@@ -1,4 +1,5 @@
 import { useEffect, type ReactNode } from 'react'
+import { useT } from '../../i18n'
 
 interface ModalProps {
   title: string
@@ -8,6 +9,7 @@ interface ModalProps {
 }
 
 export function Modal({ title, onClose, children, wide }: ModalProps) {
+  const t = useT()
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') onClose()
@@ -30,7 +32,7 @@ export function Modal({ title, onClose, children, wide }: ModalProps) {
           <button
             type="button"
             onClick={onClose}
-            aria-label="关闭"
+            aria-label={t('common.close')}
             className="text-gray-400 hover:text-gray-600"
           >
             ✕

@@ -105,8 +105,51 @@ export interface PlanCreateResult {
   summary: ScheduleSummary
 }
 
+export type Language = 'zh-CN' | 'en-US'
+export type AiMode = 'manual' | 'api'
+export type ProviderName = 'openai' | 'deepseek' | 'claude'
+
+export interface ProviderConfig {
+  baseUrl: string
+  model: string
+}
+
 export interface Settings {
   dailyMaxPlannedHours: number
+  language: Language
+  aiMode: AiMode
+  activeProvider: ProviderName
+  providers: Record<ProviderName, ProviderConfig>
+}
+
+/** GET /api/settings adds per-provider key presence; keys themselves never leave the server. */
+export interface SettingsResponse extends Settings {
+  configured: Record<ProviderName, boolean>
+}
+
+export const PROVIDER_NAMES: ProviderName[] = ['openai', 'deepseek', 'claude']
+
+/** Drop the read-only `configured` map before sending settings back to PUT. */
+export function toSettings(s: SettingsResponse): Settings {
+  return {
+    dailyMaxPlannedHours: s.dailyMaxPlannedHours,
+    language: s.language,
+    aiMode: s.aiMode,
+    activeProvider: s.activeProvider,
+    providers: s.providers,
+  }
+}
+
+export const DEFAULT_SETTINGS: Settings = {
+  dailyMaxPlannedHours: 6,
+  language: 'zh-CN',
+  aiMode: 'manual',
+  activeProvider: 'openai',
+  providers: {
+    openai: { baseUrl: 'https://api.openai.com/v1', model: 'gpt-4o' },
+    deepseek: { baseUrl: 'https://api.deepseek.com', model: 'deepseek-chat' },
+    claude: { baseUrl: 'https://api.anthropic.com', model: 'claude-3-5-sonnet-latest' },
+  },
 }
 
 // ---- AI plan import (manual copy/paste LLM workflow) ----
@@ -157,6 +200,11 @@ export interface PlanImportResult {
   applied: number
   rejected: number
   scheduleSummary?: ScheduleSummary | null
+}
+
+/** POST /api/ai-import/run: the preview plus the raw JSON the provider returned. */
+export interface RunResult extends PlanPreview {
+  rawOutput: string
 }
 
 // ---- task tracking (checklist / work logs / attachments / estimates / career) ----

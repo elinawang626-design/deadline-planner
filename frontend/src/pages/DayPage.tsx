@@ -9,11 +9,13 @@ import { BlockEditModal } from '../components/schedule/BlockEditModal'
 import { TaskForm } from '../components/tasks/TaskForm'
 import { PlanForm } from '../components/plans/PlanForm'
 import { WEEKDAY_LABELS } from '../lib/labels'
+import { useT } from '../i18n'
 import type { ScheduledBlock } from '../types'
 
 const navBtn = 'rounded-md border border-gray-300 px-2 py-1 text-sm hover:bg-gray-50'
 
 export default function DayPage() {
+  const t = useT()
   const currentDate = useUI((s) => s.currentDate)
   const setCurrentDate = useUI((s) => s.setCurrentDate)
   const date = parseISO(currentDate)
@@ -32,25 +34,25 @@ export default function DayPage() {
   return (
     <div className="mx-auto max-w-4xl">
       <div className="mb-4 flex items-center gap-2">
-        <button onClick={() => shift(-1)} className={navBtn} aria-label="前一天">←</button>
+        <button onClick={() => shift(-1)} className={navBtn} aria-label={t('day.prev')}>←</button>
         <button onClick={() => setCurrentDate(format(new Date(), 'yyyy-MM-dd'))} className={navBtn}>
-          今天
+          {t('day.today')}
         </button>
-        <button onClick={() => shift(1)} className={navBtn} aria-label="后一天">→</button>
+        <button onClick={() => shift(1)} className={navBtn} aria-label={t('day.next')}>→</button>
         <h2 className="ml-2 text-lg font-semibold">
-          {format(date, 'yyyy年M月d日')} {WEEKDAY_LABELS[date.getDay()]}
+          {format(date, t('fmt.dateLong'))} {WEEKDAY_LABELS[date.getDay()]}
         </h2>
         <button
           onClick={() => setCreatingTask(true)}
           className="ml-auto rounded-md border border-gray-300 px-3 py-1.5 text-sm hover:bg-gray-50"
         >
-          ＋ 新建任务
+          {t('task.new')}
         </button>
         <button
           onClick={() => setCreatingPlan(true)}
           className="rounded-md border border-gray-300 px-3 py-1.5 text-sm hover:bg-gray-50"
         >
-          ＋ 新建计划
+          {t('plan.new')}
         </button>
       </div>
       <DayView

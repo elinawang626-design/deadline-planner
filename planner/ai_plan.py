@@ -66,6 +66,12 @@ MODE_LABELS: dict[str, str] = {
     "tasks_only": "AI 整理任务、本地排程",
 }
 
+MODE_LABELS_EN: dict[str, str] = {
+    "ai_plan": "AI builds a new plan",
+    "ai_optimize": "AI optimizes the existing plan",
+    "tasks_only": "AI tidies tasks, local scheduler plans",
+}
+
 
 class PlanRejected(ValueError):
     """Raised when a pasted reply cannot be turned into exactly one plan."""
@@ -298,9 +304,81 @@ _MODE_RULES: dict[str, str] = {
     ),
 }
 
+_MODE_RULES_EN: dict[str, str] = {
+    "ai_plan": (
+        "Build a brand-new plan: consider every active task. You may edit task "
+        "attributes and you must place concrete time blocks in scheduled_blocks. "
+        "The system removes future, unlocked machine blocks (source ai or "
+        "local_auto) and replaces them with yours."
+    ),
+    "ai_optimize": (
+        "Optimize the existing plan: keep all protected blocks (past, done, "
+        "manual, locked, and local_auto blocks), and only re-plan future, "
+        "unlocked blocks whose source is ai. Protected blocks are hard "
+        "constraints; your blocks must not overlap them."
+    ),
+    "tasks_only": (
+        "Only tidy tasks: you may add/update/delete tasks, availability and "
+        "fixed events, but do not return scheduled_blocks (the local "
+        "deterministic scheduler will plan them)."
+    ),
+}
+
+
+def _build_plan_prompt_en(
+    mode: PlanMode,
+    requirements_text: str,
+    active_tasks: list,
+    availability: list,
+    events: list,
+    future_blocks: list,
+    schema: str,
+    state: WebState,
+    now: datetime,
+) -> str:
+    return f"""You are the planning brain of a local-first deadline planner. The tool never goes online; the user pastes your JSON back into the tool, where it is validated and previewed before being written.
+
+Current time: {now.isoformat()}
+Time zone: {now.tzinfo}
+Daily planned cap: {state.settings.dailyMaxPlannedHours} hours (task blocks only; fixed events excluded)
+Mode: {MODE_LABELS_EN[mode]}
+
+## Mode rules
+{_MODE_RULES_EN[mode]}
+
+## Current data (matched by id; same id = update, new id = add, deletions must go in deleted_ids)
+### active tasks
+{json.dumps(active_tasks, indent=2, ensure_ascii=False)}
+### availability rules (weekday: 0=Sunday … 6=Saturday; with no rules the default is 09:00-17:00 daily)
+{json.dumps(availability, indent=2, ensure_ascii=False)}
+### fixed events
+{json.dumps(events, indent=2, ensure_ascii=False)}
+### future blocks (protected=true blocks are never removed; your blocks must not overlap them)
+{json.dumps(future_blocks, indent=2, ensure_ascii=False)}
+
+## User requirements for this run
+{requirements_text}
+
+## Output rules
+- Output a single JSON object (optionally inside a ```json code block, with brief surrounding text, but only one plan JSON).
+- Top-level fields: schedule_strategy, tasks, availability_rules, fixed_events, scheduled_blocks, deleted_ids — all optional; omitted records stay unchanged, so do not repeat unmodified records.
+- Every datetime must be ISO 8601 with a UTC offset.
+- New tasks must carry a unique id; scheduled_blocks reference tasks via task_id (may reference tasks created in the same reply).
+- Each block must: avoid fixed events, unavailable time and protected blocks; not start before the task's earliest_start_at; end before the task's deadline (no limit when the task has none); not overlap other blocks in this batch; not be earlier than the current time.
+- Try to respect the daily planned cap; exceeding it produces a warning in the preview.
+- Do not invent fields; unknown fields are rejected.
+
+## JSON Schema
+{schema}
+"""
+
 
 def build_plan_prompt(
-    mode: PlanMode, requirements: str, state: WebState, now: datetime
+    mode: PlanMode,
+    requirements: str,
+    state: WebState,
+    now: datetime,
+    language: str = "zh-CN",
 ) -> str:
     tz = now.tzinfo
     active_tasks = [
@@ -350,6 +428,20 @@ def build_plan_prompt(
             }
         )
     schema = json.dumps(AiPlan.model_json_schema(), indent=2, ensure_ascii=False)
+
+    if language == "en-US":
+        return _build_plan_prompt_en(
+            mode,
+            requirements.strip() or "(no extra requirements)",
+            active_tasks,
+            availability,
+            events,
+            future_blocks,
+            schema,
+            state,
+            now,
+        )
+
     requirements_text = requirements.strip() or "（无额外要求）"
 
     return f"""你是一个本地截止日期规划工具的规划大脑。工具本身不联网；用户会把你输出的 JSON 粘贴回工具，经校验和预览后写入。

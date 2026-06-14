@@ -1,5 +1,6 @@
 import { format, isSameDay, parseISO } from 'date-fns'
 import { PRIORITY_LABELS, priorityColor } from '../../lib/labels'
+import { useT } from '../../i18n'
 import type { FixedEvent, ScheduledBlock, Task } from '../../types'
 
 const START_HOUR = 6
@@ -15,7 +16,8 @@ interface DayViewProps {
 }
 
 export function DayView({ date, blocks, tasks, fixedEvents, onBlockClick }: DayViewProps) {
-  const taskById = new Map(tasks.map((t) => [t.id, t]))
+  const t = useT()
+  const taskById = new Map(tasks.map((task) => [task.id, task]))
   const dayBlocks = blocks.filter((b) => isSameDay(parseISO(b.startAt), date))
   const dayEvents = fixedEvents.filter((e) => isSameDay(parseISO(e.startAt), date))
   const hours = Array.from({ length: END_HOUR - START_HOUR }, (_, i) => START_HOUR + i)
@@ -58,7 +60,7 @@ export function DayView({ date, blocks, tasks, fixedEvents, onBlockClick }: DayV
               <span className="ml-1">
                 {format(parseISO(event.startAt), 'HH:mm')}–{format(parseISO(event.endAt), 'HH:mm')}
               </span>
-              <span className="ml-1 text-gray-400">固定事件</span>
+              <span className="ml-1 text-gray-400">{t('cal.fixedEvent')}</span>
             </div>
           )
         })}
@@ -80,17 +82,17 @@ export function DayView({ date, blocks, tasks, fixedEvents, onBlockClick }: DayV
                 {format(parseISO(block.startAt), 'HH:mm')}–{format(parseISO(block.endAt), 'HH:mm')}
               </span>
               {task && <span className="ml-1">{PRIORITY_LABELS[task.priority]}</span>}
-              {block.locked && <span className="ml-1" title="已锁定">🔒</span>}
+              {block.locked && <span className="ml-1" title={t('cal.locked')}>🔒</span>}
               {block.source === 'manual' && (
-                <span className="ml-1 rounded bg-white/70 px-1">手动</span>
+                <span className="ml-1 rounded bg-white/70 px-1">{t('cal.manual')}</span>
               )}
-              {overDeadline && <span className="ml-1" title="超过截止时间">⚠️</span>}
+              {overDeadline && <span className="ml-1" title={t('cal.overDeadline')}>⚠️</span>}
             </button>
           )
         })}
         {dayBlocks.length === 0 && dayEvents.length === 0 && (
           <p className="absolute inset-x-0 top-24 text-center text-sm text-gray-400">
-            这一天还没有安排。新建任务或点击右上角「重新生成日程」。
+            {t('dayView.empty')}
           </p>
         )}
       </div>

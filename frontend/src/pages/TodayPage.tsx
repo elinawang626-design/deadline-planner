@@ -9,11 +9,13 @@ import { BlockEditModal } from '../components/schedule/BlockEditModal'
 import { TaskForm } from '../components/tasks/TaskForm'
 import { PlanForm } from '../components/plans/PlanForm'
 import { WEEKDAY_LABELS } from '../lib/labels'
+import { useT } from '../i18n'
 import type { ScheduledBlock } from '../types'
 
 const actionBtn = 'rounded-md border border-gray-300 px-3 py-1.5 text-sm hover:bg-gray-50'
 
 export default function TodayPage() {
+  const t = useT()
   const today = new Date()
   const todayStr = format(today, 'yyyy-MM-dd')
   const { data: tasks = [] } = useQuery({ queryKey: ['tasks'], queryFn: listTasks })
@@ -38,25 +40,27 @@ export default function TodayPage() {
     <div className="mx-auto max-w-4xl">
       <div className="flex items-center gap-2">
         <h2 className="text-xl font-semibold">
-          {format(today, 'yyyy年M月d日')} {WEEKDAY_LABELS[today.getDay()]}
+          {format(today, t('fmt.dateLong'))} {WEEKDAY_LABELS[today.getDay()]}
         </h2>
         <button onClick={() => setCreatingTask(true)} className={`ml-auto ${actionBtn}`}>
-          ＋ 新建任务
+          {t('task.new')}
         </button>
         <button onClick={() => setCreatingPlan(true)} className={actionBtn}>
-          ＋ 新建计划
+          {t('plan.new')}
         </button>
       </div>
       <p className="mb-4 text-sm text-gray-500">
-        今日 {todayBlocks.length} 个时间块 / {plannedHours.toFixed(1)} 小时
-        {todayBlocks.length > 0 && `，已完成 ${doneCount} 块`}
+        {t('today.summary', { count: todayBlocks.length, hours: plannedHours.toFixed(1) })}
+        {todayBlocks.length > 0 && t('today.doneCount', { count: doneCount })}
       </p>
       {lastSummary &&
         (lastSummary.warnings.length > 0 || lastSummary.totalUnscheduledMinutes > 0) && (
           <div className="mb-4 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">
-            <p className="mb-1 font-medium">上次调度的结果</p>
+            <p className="mb-1 font-medium">{t('today.lastResult')}</p>
             {lastSummary.totalUnscheduledMinutes > 0 && (
-              <p className="mb-1">共 {lastSummary.totalUnscheduledMinutes} 分钟未能安排。</p>
+              <p className="mb-1">
+                {t('today.unscheduledMin', { minutes: lastSummary.totalUnscheduledMinutes })}
+              </p>
             )}
             <ul className="list-inside list-disc">
               {lastSummary.warnings.map((w, i) => (

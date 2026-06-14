@@ -1,4 +1,6 @@
 import { addDays, format, isSameDay, isSameMonth, isToday, parseISO, startOfMonth, startOfWeek } from 'date-fns'
+import { WEEKDAY_LABELS, WEEKDAY_ORDER } from '../../lib/labels'
+import { useT } from '../../i18n'
 import type { ScheduledBlock, Settings, Task } from '../../types'
 
 const NEAR_CAP_RATIO = 0.8
@@ -22,15 +24,16 @@ export function MonthView({
   onCreateTask,
   onCreatePlan,
 }: MonthViewProps) {
-  const taskById = new Map(tasks.map((t) => [t.id, t]))
+  const t = useT()
+  const taskById = new Map(tasks.map((task) => [task.id, task]))
   const gridStart = startOfWeek(startOfMonth(month), { weekStartsOn: 1 })
   const cells = Array.from({ length: 42 }, (_, i) => addDays(gridStart, i))
 
   return (
     <div>
       <div className="grid grid-cols-7 text-center text-xs text-gray-500">
-        {['周一', '周二', '周三', '周四', '周五', '周六', '周日'].map((label) => (
-          <div key={label} className="py-1">{label}</div>
+        {WEEKDAY_ORDER.map((weekday) => (
+          <div key={weekday} className="py-1">{WEEKDAY_LABELS[weekday]}</div>
         ))}
       </div>
       <div className="grid grid-cols-7 gap-px overflow-hidden rounded-lg border border-gray-200 bg-gray-200">
@@ -43,7 +46,7 @@ export function MonthView({
             0,
           )
           const dueCount = tasks.filter(
-            (t) => t.status === 'active' && !!t.deadline && isSameDay(parseISO(t.deadline), day),
+            (task) => task.status === 'active' && !!task.deadline && isSameDay(parseISO(task.deadline), day),
           ).length
           const overloaded = plannedHours > settings.dailyMaxPlannedHours
           const nearCap =
@@ -70,19 +73,19 @@ export function MonthView({
                 </span>
                 {dayBlocks.length > 0 && (
                   <span className="text-gray-400">
-                    {dayBlocks.length}块 {plannedHours.toFixed(0)}h
+                    {t('monthView.blocksHours', { count: dayBlocks.length, hours: plannedHours.toFixed(0) })}
                   </span>
                 )}
                 {overloaded && (
                   <span
                     className="rounded bg-red-100 px-1 text-[10px] text-red-700"
-                    title={`超过每日上限 ${settings.dailyMaxPlannedHours} 小时`}
+                    title={t('monthView.overCapTitle', { hours: settings.dailyMaxPlannedHours })}
                   >
                     +{(plannedHours - settings.dailyMaxPlannedHours).toFixed(1)}h
                   </span>
                 )}
                 {nearCap && (
-                  <span className="h-1.5 w-1.5 rounded-full bg-amber-400" title="接近每日上限" />
+                  <span className="h-1.5 w-1.5 rounded-full bg-amber-400" title={t('monthView.nearCapTitle')} />
                 )}
                 <span className="ml-auto hidden gap-0.5 group-hover:flex">
                   <button
@@ -90,26 +93,26 @@ export function MonthView({
                       e.stopPropagation()
                       onCreateTask(day)
                     }}
-                    title="新建任务（截止日预填此日期）"
+                    title={t('cal.newTaskTitle')}
                     className="rounded bg-white px-1 text-[10px] text-gray-500 shadow hover:text-blue-600"
                   >
-                    ＋任务
+                    {t('cal.addTask')}
                   </button>
                   <button
                     onClick={(e) => {
                       e.stopPropagation()
                       onCreatePlan(day)
                     }}
-                    title="新建计划（日期预填此日期）"
+                    title={t('cal.newPlanTitle')}
                     className="rounded bg-white px-1 text-[10px] text-gray-500 shadow hover:text-blue-600"
                   >
-                    ＋计划
+                    {t('cal.addPlan')}
                   </button>
                 </span>
               </div>
               {dueCount > 0 && (
                 <div className="mt-0.5 inline-block rounded bg-rose-100 px-1 text-[10px] text-rose-700">
-                  {dueCount} 个截止
+                  {t('monthView.dueCount', { count: dueCount })}
                 </div>
               )}
               {top.map((b) => (
@@ -118,7 +121,7 @@ export function MonthView({
                 </div>
               ))}
               {dayBlocks.length > top.length && (
-                <div className="text-[10px] text-gray-400">+{dayBlocks.length - top.length} 更多</div>
+                <div className="text-[10px] text-gray-400">{t('monthView.more', { count: dayBlocks.length - top.length })}</div>
               )}
             </div>
           )

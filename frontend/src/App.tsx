@@ -1,8 +1,11 @@
+import { useEffect } from 'react'
 import { NavLink, Route, Routes } from 'react-router-dom'
-import { useMutation, useQueryClient } from '@tanstack/react-query'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { regenerateSchedule } from './api/schedule'
+import { getSettings } from './api/availability'
 import { USE_MOCK } from './api/client'
 import { useUI } from './store/ui'
+import { useLang, useT } from './i18n'
 import { Toaster } from './components/ui/Toaster'
 import TodayPage from './pages/TodayPage'
 import DayPage from './pages/DayPage'
@@ -12,18 +15,21 @@ import TasksPage from './pages/TasksPage'
 import TaskDetailPage from './pages/TaskDetailPage'
 import AvailabilityPage from './pages/AvailabilityPage'
 import AIImportPage from './pages/AIImportPage'
+import SettingsPage from './pages/SettingsPage'
 
 const NAV = [
-  { to: '/', label: '今天' },
-  { to: '/day', label: '日视图' },
-  { to: '/week', label: '周视图' },
-  { to: '/month', label: '月视图' },
-  { to: '/tasks', label: '任务' },
-  { to: '/availability', label: '可用时间' },
-  { to: '/ai-import', label: 'AI 导入' },
+  { to: '/', key: 'nav.today' },
+  { to: '/day', key: 'nav.day' },
+  { to: '/week', key: 'nav.week' },
+  { to: '/month', key: 'nav.month' },
+  { to: '/tasks', key: 'nav.tasks' },
+  { to: '/availability', key: 'nav.availability' },
+  { to: '/ai-import', key: 'nav.ai' },
+  { to: '/settings', key: 'nav.settings' },
 ]
 
 function RegenerateButton() {
+  const t = useT()
   const queryClient = useQueryClient()
   const pushToast = useUI((s) => s.pushToast)
   const setLastSummary = useUI((s) => s.setLastSummary)
@@ -35,14 +41,18 @@ function RegenerateButton() {
       queryClient.invalidateQueries({ queryKey: ['tasks'] })
       pushToast(
         'success',
-        `已重新生成：新增 ${summary.createdBlocks} 块，移除 ${summary.removedBlocks} 块，${summary.warnings.length} 条警告` +
+        t('app.regenerated', {
+          created: summary.createdBlocks,
+          removed: summary.removedBlocks,
+          warnings: summary.warnings.length,
+        }) +
           (summary.totalUnscheduledMinutes > 0
-            ? `，${summary.totalUnscheduledMinutes} 分钟未排入`
+            ? t('app.regeneratedUnscheduled', { minutes: summary.totalUnscheduledMinutes })
             : ''),
       )
     },
     onError: (error: unknown) =>
-      pushToast('error', error instanceof Error ? error.message : '重新生成失败'),
+      pushToast('error', error instanceof Error ? error.message : t('app.regenerateFailed')),
   })
   return (
     <button
@@ -50,16 +60,24 @@ function RegenerateButton() {
       disabled={mutation.isPending}
       className="rounded-md bg-blue-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50"
     >
-      {mutation.isPending ? '生成中…' : '重新生成日程'}
+      {mutation.isPending ? t('app.regenerating') : t('app.regenerate')}
     </button>
   )
 }
 
 export default function App() {
+  const t = useT()
+  const setLang = useLang((s) => s.setLang)
+  // Server settings are the source of truth for language; sync once loaded.
+  const { data: settings } = useQuery({ queryKey: ['settings'], queryFn: getSettings })
+  useEffect(() => {
+    if (settings?.language) setLang(settings.language)
+  }, [settings?.language, setLang])
+
   return (
     <div className="flex min-h-screen">
       <aside className="w-44 shrink-0 border-r border-gray-200 bg-white p-4">
-        <h1 className="mb-6 text-base font-bold">Deadline Planner</h1>
+        <h1 className="mb-6 text-base font-bold">{t('app.title')}</h1>
         <nav className="flex flex-col gap-1">
           {NAV.map((item) => (
             <NavLink
@@ -74,13 +92,13 @@ export default function App() {
                 }`
               }
             >
-              {item.label}
+              {t(item.key)}
             </NavLink>
           ))}
         </nav>
         {USE_MOCK && (
           <p className="mt-6 rounded-md bg-amber-50 p-2 text-xs text-amber-700">
-            Mock 数据模式（无后端，数据存于浏览器）
+            {t('app.mockBanner')}
           </p>
         )}
       </aside>
@@ -98,6 +116,7 @@ export default function App() {
             <Route path="/tasks/:taskId" element={<TaskDetailPage />} />
             <Route path="/availability" element={<AvailabilityPage />} />
             <Route path="/ai-import" element={<AIImportPage />} />
+            <Route path="/settings" element={<SettingsPage />} />
           </Routes>
         </main>
       </div>

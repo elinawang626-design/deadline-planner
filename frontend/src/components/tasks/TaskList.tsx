@@ -11,17 +11,12 @@ import {
   fmtMinutes,
   priorityColor,
 } from '../../lib/labels'
+import { useT } from '../../i18n'
 import type { Priority, ScheduledBlock, Task, TrackingSummary } from '../../types'
 
 type Filter = 'active' | 'completed' | 'archived' | 'overdue' | 'week'
 
-const FILTERS: Array<{ key: Filter; label: string }> = [
-  { key: 'active', label: '进行中' },
-  { key: 'overdue', label: '已逾期' },
-  { key: 'week', label: '本周截止' },
-  { key: 'completed', label: '已完成' },
-  { key: 'archived', label: '已归档' },
-]
+const FILTER_KEYS: Filter[] = ['active', 'overdue', 'week', 'completed', 'archived']
 
 interface TaskListProps {
   tasks: Task[]
@@ -31,8 +26,10 @@ interface TaskListProps {
 }
 
 export function TaskList({ tasks, blocks, onEdit, tracking = {} }: TaskListProps) {
+  const t = useT()
   const queryClient = useQueryClient()
   const pushToast = useUI((s) => s.pushToast)
+  const filters = FILTER_KEYS.map((key) => ({ key, label: t(`taskList.filter.${key}`) }))
   const [filter, setFilter] = useState<Filter>('active')
   const [priorityFilter, setPriorityFilter] = useState<'all' | Priority>('all')
   const [expandedId, setExpandedId] = useState<string | null>(null)
@@ -45,13 +42,13 @@ export function TaskList({ tasks, blocks, onEdit, tracking = {} }: TaskListProps
     mutationFn: ({ id, patch }: { id: string; patch: Partial<Task> }) => updateTask(id, patch),
     onSuccess: invalidate,
     onError: (error: unknown) =>
-      pushToast('error', error instanceof Error ? error.message : '更新失败'),
+      pushToast('error', error instanceof Error ? error.message : t('common.updateFailed')),
   })
   const removeTask = useMutation({
     mutationFn: (id: string) => deleteTask(id),
     onSuccess: () => {
       invalidate()
-      pushToast('success', '任务已删除（其时间块一并移除）')
+      pushToast('success', t('taskList.deleted'))
     },
   })
 
@@ -89,7 +86,7 @@ export function TaskList({ tasks, blocks, onEdit, tracking = {} }: TaskListProps
   return (
     <div>
       <div className="mb-3 flex flex-wrap items-center gap-2">
-        {FILTERS.map((f) => (
+        {filters.map((f) => (
           <button
             key={f.key}
             onClick={() => setFilter(f.key)}
@@ -105,7 +102,7 @@ export function TaskList({ tasks, blocks, onEdit, tracking = {} }: TaskListProps
           value={priorityFilter}
           onChange={(e) => setPriorityFilter(e.target.value as 'all' | Priority)}
         >
-          <option value="all">全部优先级</option>
+          <option value="all">{t('taskList.allPriorities')}</option>
           {Object.entries(PRIORITY_LABELS).map(([value, label]) => (
             <option key={value} value={value}>{label}</option>
           ))}
@@ -113,7 +110,7 @@ export function TaskList({ tasks, blocks, onEdit, tracking = {} }: TaskListProps
       </div>
       {visible.length === 0 && (
         <p className="rounded-lg border border-dashed border-gray-300 p-8 text-center text-sm text-gray-400">
-          没有符合条件的任务
+          {t('taskList.empty')}
         </p>
       )}
       <div className="flex flex-col gap-2">
@@ -135,53 +132,56 @@ export function TaskList({ tasks, blocks, onEdit, tracking = {} }: TaskListProps
                 <span className="text-xs text-gray-400">{TYPE_LABELS[task.type]}</span>
                 <span className={`text-xs ${overdue ? 'font-medium text-red-600' : 'text-gray-500'}`}>
                   {task.deadline
-                    ? `截止 ${format(parseISO(task.deadline), 'M/d HH:mm')}`
-                    : '无截止（不自动排程）'}
-                  {overdue && '（已逾期）'}
+                    ? t('taskList.deadline', { time: format(parseISO(task.deadline), 'M/d HH:mm') })
+                    : t('taskList.noDeadline')}
+                  {overdue && t('taskList.overdueTag')}
                 </span>
                 <span className="text-xs text-gray-400">{STATUS_LABELS[task.status]}</span>
               </div>
               <div className="mt-1 flex flex-wrap gap-3 text-xs text-gray-500">
-                <span>预计 {fmtMinutes(task.estimatedMinutes)}</span>
-                <span>已排 {fmtMinutes(scheduled)}</span>
-                <span>剩余 {fmtMinutes(remaining)}</span>
+                <span>{t('taskList.estimated', { value: fmtMinutes(task.estimatedMinutes) })}</span>
+                <span>{t('taskList.scheduledTime', { value: fmtMinutes(scheduled) })}</span>
+                <span>{t('taskList.remaining', { value: fmtMinutes(remaining) })}</span>
                 {task.earliestStartAt && (
-                  <span>最早开始 {format(parseISO(task.earliestStartAt), 'M/d HH:mm')}</span>
+                  <span>{t('taskList.earliestStart', { time: format(parseISO(task.earliestStartAt), 'M/d HH:mm') })}</span>
                 )}
                 {tracking[task.id] && (
                   <>
                     {tracking[task.id].checklistTotal > 0 && (
                       <span>
-                        检查项 {tracking[task.id].checklistDone}/{tracking[task.id].checklistTotal}
+                        {t('taskList.checklist', {
+                          done: tracking[task.id].checklistDone,
+                          total: tracking[task.id].checklistTotal,
+                        })}
                       </span>
                     )}
                     {tracking[task.id].actualMinutes > 0 && (
-                      <span>实际 {fmtMinutes(tracking[task.id].actualMinutes)}</span>
+                      <span>{t('taskList.actual', { value: fmtMinutes(tracking[task.id].actualMinutes) })}</span>
                     )}
                     {tracking[task.id].attachmentCount > 0 && (
-                      <span>附件 {tracking[task.id].attachmentCount}</span>
+                      <span>{t('taskList.attachments', { count: tracking[task.id].attachmentCount })}</span>
                     )}
                   </>
                 )}
               </div>
               <div className="mt-2 flex flex-wrap gap-2 text-xs">
                 <Link to={`/tasks/${task.id}`} className="font-medium text-blue-600 hover:underline">
-                  详情
+                  {t('common.detail')}
                 </Link>
-                <button onClick={() => onEdit(task)} className="text-blue-600 hover:underline">编辑</button>
+                <button onClick={() => onEdit(task)} className="text-blue-600 hover:underline">{t('common.edit')}</button>
                 {task.status === 'active' ? (
                   <button
                     onClick={() => patchTask.mutate({ id: task.id, patch: { status: 'completed' } })}
                     className="text-green-700 hover:underline"
                   >
-                    标记完成
+                    {t('taskList.markComplete')}
                   </button>
                 ) : (
                   <button
                     onClick={() => patchTask.mutate({ id: task.id, patch: { status: 'active' } })}
                     className="text-gray-600 hover:underline"
                   >
-                    恢复进行中
+                    {t('taskList.restoreActive')}
                   </button>
                 )}
                 {task.status !== 'archived' && (
@@ -189,35 +189,37 @@ export function TaskList({ tasks, blocks, onEdit, tracking = {} }: TaskListProps
                     onClick={() => patchTask.mutate({ id: task.id, patch: { status: 'archived' } })}
                     className="text-gray-600 hover:underline"
                   >
-                    归档
+                    {t('taskList.archive')}
                   </button>
                 )}
                 <button
                   onClick={() => {
-                    if (window.confirm(`删除任务「${task.title}」？其时间块会一并删除。`)) {
+                    if (window.confirm(t('taskList.confirmDelete', { title: task.title }))) {
                       removeTask.mutate(task.id)
                     }
                   }}
                   className="text-red-600 hover:underline"
                 >
-                  删除
+                  {t('common.delete')}
                 </button>
                 <button
                   onClick={() => setExpandedId(expandedId === task.id ? null : task.id)}
                   className="text-gray-600 hover:underline"
                 >
-                  {expandedId === task.id ? '收起时间块' : `时间块（${taskBlocks.length}）`}
+                  {expandedId === task.id
+                    ? t('taskList.collapseBlocks')
+                    : t('taskList.blocks', { count: taskBlocks.length })}
                 </button>
               </div>
               {expandedId === task.id && (
                 <div className="mt-2 rounded-md bg-gray-50 p-2 text-xs text-gray-600">
-                  {taskBlocks.length === 0 && <p>还没有为该任务安排时间块。</p>}
+                  {taskBlocks.length === 0 && <p>{t('taskList.noBlocks')}</p>}
                   {taskBlocks.map((b) => (
                     <p key={b.id}>
                       {format(parseISO(b.startAt), 'M/d HH:mm')}–{format(parseISO(b.endAt), 'HH:mm')}
                       {b.locked && ' 🔒'}
-                      {b.source === 'manual' && '（手动）'}
-                      {b.done && ' ✓已完成'}
+                      {b.source === 'manual' && t('taskList.blockManual')}
+                      {b.done && t('taskList.blockDone')}
                     </p>
                   ))}
                 </div>

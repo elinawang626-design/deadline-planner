@@ -14,6 +14,7 @@ import {
   type PlanState,
 } from './aiPlan'
 import { MAX_HORIZON_DAYS, scheduleEngine, type EngineTask } from './mockEngine'
+import { DEFAULT_SETTINGS, PROVIDER_NAMES } from '../types'
 import type {
   AvailabilityWindow,
   FixedEvent,
@@ -22,10 +23,12 @@ import type {
   PlanImportResult,
   PlanMode,
   PlanPreview,
+  ProviderName,
   ScheduleSummary,
   ScheduleWarning,
   ScheduledBlock,
   Settings,
+  SettingsResponse,
   Task,
   TaskScheduleStat,
   TaskStatus,
@@ -37,6 +40,14 @@ interface MockState {
   availability: AvailabilityWindow[]
   fixedEvents: FixedEvent[]
   settings: Settings
+  configured?: Record<ProviderName, boolean>
+}
+
+function emptyConfigured(): Record<ProviderName, boolean> {
+  return Object.fromEntries(PROVIDER_NAMES.map((p) => [p, false])) as Record<
+    ProviderName,
+    boolean
+  >
 }
 
 const STORAGE_KEY = 'deadline-planner-mock-v1'
@@ -81,17 +92,21 @@ function seed(): MockState {
         endAt: addHours(tomorrow10, 1).toISOString(),
       },
     ],
-    settings: { dailyMaxPlannedHours: 6 },
+    settings: { ...DEFAULT_SETTINGS },
+    configured: emptyConfigured(),
   }
 }
 
 function migrate(state: MockState): MockState {
-  // legacy stored source 'auto' becomes 'local_auto'
+  // legacy stored source 'auto' becomes 'local_auto'; old settings get the new
+  // AI/language fields back-filled from defaults.
   return {
     ...state,
     blocks: state.blocks.map((b) =>
       (b.source as string) === 'auto' ? { ...b, source: 'local_auto' } : b,
     ),
+    settings: { ...DEFAULT_SETTINGS, ...state.settings },
+    configured: state.configured ?? emptyConfigured(),
   }
 }
 
@@ -239,14 +254,45 @@ export async function deleteAvailability(id: string): Promise<void> {
   return delay(undefined)
 }
 
-export async function getSettings(): Promise<Settings> {
-  return delay({ ...load().settings })
+export async function getSettings(): Promise<SettingsResponse> {
+  const state = load()
+  return delay({ ...state.settings, configured: state.configured ?? emptyConfigured() })
 }
 
-export async function saveSettings(settings: Settings): Promise<Settings> {
+export async function saveSettings(settings: Settings): Promise<SettingsResponse> {
   const state = load()
-  save({ ...state, settings })
-  return delay(settings)
+  const merged: Settings = { ...DEFAULT_SETTINGS, ...settings }
+  save({ ...state, settings: merged })
+  return delay({ ...merged, configured: state.configured ?? emptyConfigured() })
+}
+
+export async function saveProviderKey(
+  provider: ProviderName,
+): Promise<Record<ProviderName, boolean>> {
+  const state = load()
+  const configured = { ...(state.configured ?? emptyConfigured()), [provider]: true }
+  save({ ...state, configured })
+  return delay(configured)
+}
+
+export async function deleteProviderKey(
+  provider: ProviderName,
+): Promise<Record<ProviderName, boolean>> {
+  const state = load()
+  const configured = { ...(state.configured ?? emptyConfigured()), [provider]: false }
+  save({ ...state, configured })
+  return delay(configured)
+}
+
+export async function testProviderKey(): Promise<never> {
+  // Mock mode never reaches a real provider.
+  await delay(undefined)
+  throw new Error('MOCK_NO_BACKEND')
+}
+
+export async function runPlan(): Promise<never> {
+  await delay(undefined)
+  throw new Error('MOCK_NO_BACKEND')
 }
 
 // ---- AI plan import (same parse / preview / import rules as the backend) ----

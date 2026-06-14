@@ -4,6 +4,7 @@ import { format, parseISO } from 'date-fns'
 import { deleteBlock, regenerateSchedule, updateBlock } from '../../api/schedule'
 import { useUI } from '../../store/ui'
 import { Modal } from '../ui/Modal'
+import { useT } from '../../i18n'
 import type { BlockSource, ScheduledBlock, Task } from '../../types'
 
 const inputCls =
@@ -17,6 +18,7 @@ interface BlockEditModalProps {
 }
 
 export function BlockEditModal({ block, task, onClose }: BlockEditModalProps) {
+  const t = useT()
   const queryClient = useQueryClient()
   const pushToast = useUI((s) => s.pushToast)
   const setLastSummary = useUI((s) => s.setLastSummary)
@@ -36,7 +38,7 @@ export function BlockEditModal({ block, task, onClose }: BlockEditModalProps) {
     mutationFn: async () => {
       const start = new Date(startAt)
       const end = new Date(endAt)
-      if (!(start < end)) throw new Error('结束时间必须晚于开始时间')
+      if (!(start < end)) throw new Error(t('planForm.endAfterStart'))
       const timeChanged =
         start.toISOString() !== block.startAt || end.toISOString() !== block.endAt
       // a manually moved block becomes manual + locked so regeneration keeps it
@@ -47,24 +49,24 @@ export function BlockEditModal({ block, task, onClose }: BlockEditModalProps) {
         source: timeChanged ? 'manual' : source,
         notes: notes || undefined,
       })
-      if (timeChanged && window.confirm('该时间块已锁定。是否围绕它重新生成其余日程？')) {
+      if (timeChanged && window.confirm(t('blockEdit.confirmRegen'))) {
         setLastSummary(await regenerateSchedule())
       }
     },
     onSuccess: () => {
       invalidate()
-      pushToast('success', '时间块已更新')
+      pushToast('success', t('blockEdit.updated'))
       onClose()
     },
     onError: (error: unknown) =>
-      pushToast('error', error instanceof Error ? error.message : '更新失败'),
+      pushToast('error', error instanceof Error ? error.message : t('common.updateFailed')),
   })
 
   const toggleDone = useMutation({
     mutationFn: () => updateBlock(block.id, { done: !block.done }),
     onSuccess: () => {
       invalidate()
-      pushToast('success', block.done ? '已取消完成标记' : '已标记完成')
+      pushToast('success', block.done ? t('blockEdit.unmarkedDone') : t('blockEdit.markedDone'))
       onClose()
     },
   })
@@ -73,13 +75,13 @@ export function BlockEditModal({ block, task, onClose }: BlockEditModalProps) {
     mutationFn: () => deleteBlock(block.id),
     onSuccess: () => {
       invalidate()
-      pushToast('success', '时间块已删除')
+      pushToast('success', t('blockEdit.deleted'))
       onClose()
     },
   })
 
   return (
-    <Modal title={task ? `时间块：${task.title}` : '时间块'} onClose={onClose}>
+    <Modal title={task ? t('blockEdit.title', { title: task.title }) : t('blockEdit.titleNoTask')} onClose={onClose}>
       <form
         onSubmit={(e) => {
           e.preventDefault()
@@ -88,33 +90,33 @@ export function BlockEditModal({ block, task, onClose }: BlockEditModalProps) {
         className="flex flex-col gap-3"
       >
         <div>
-          <label className={labelCls}>开始时间</label>
+          <label className={labelCls}>{t('blockEdit.startTime')}</label>
           <input type="datetime-local" className={inputCls} value={startAt} onChange={(e) => setStartAt(e.target.value)} />
         </div>
         <div>
-          <label className={labelCls}>结束时间</label>
+          <label className={labelCls}>{t('blockEdit.endTime')}</label>
           <input type="datetime-local" className={inputCls} value={endAt} onChange={(e) => setEndAt(e.target.value)} />
         </div>
         <div className="flex items-center gap-4">
           <label className="flex items-center gap-2 text-sm">
             <input type="checkbox" checked={locked} onChange={(e) => setLocked(e.target.checked)} />
-            锁定（重排时保留）
+            {t('blockEdit.locked')}
           </label>
           <label className="flex items-center gap-2 text-sm">
-            来源
+            {t('blockEdit.source')}
             <select
               className="rounded-md border border-gray-300 px-2 py-1 text-sm"
               value={source}
               onChange={(e) => setSource(e.target.value as BlockSource)}
             >
-              <option value="ai">AI 安排</option>
-              <option value="local_auto">本地自动</option>
-              <option value="manual">手动</option>
+              <option value="ai">{t('blockEdit.sourceAi')}</option>
+              <option value="local_auto">{t('blockEdit.sourceLocalAuto')}</option>
+              <option value="manual">{t('blockEdit.sourceManual')}</option>
             </select>
           </label>
         </div>
         <div>
-          <label className={labelCls}>备注</label>
+          <label className={labelCls}>{t('form.notes')}</label>
           <textarea className={inputCls} rows={2} value={notes} onChange={(e) => setNotes(e.target.value)} />
         </div>
         <div className="mt-2 flex items-center justify-between">
@@ -123,7 +125,7 @@ export function BlockEditModal({ block, task, onClose }: BlockEditModalProps) {
             onClick={() => remove.mutate()}
             className="rounded-md border border-red-300 px-3 py-1.5 text-sm text-red-600 hover:bg-red-50"
           >
-            删除
+            {t('common.delete')}
           </button>
           <div className="flex gap-2">
             <button
@@ -131,14 +133,14 @@ export function BlockEditModal({ block, task, onClose }: BlockEditModalProps) {
               onClick={() => toggleDone.mutate()}
               className="rounded-md border border-gray-300 px-3 py-1.5 text-sm hover:bg-gray-50"
             >
-              {block.done ? '取消完成' : '标记完成'}
+              {block.done ? t('blockEdit.unmarkDone') : t('blockEdit.markDone')}
             </button>
             <button
               type="submit"
               disabled={save.isPending}
               className="rounded-md bg-blue-600 px-4 py-1.5 text-sm text-white hover:bg-blue-700 disabled:opacity-50"
             >
-              保存
+              {t('common.save')}
             </button>
           </div>
         </div>

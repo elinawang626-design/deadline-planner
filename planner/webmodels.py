@@ -15,7 +15,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Literal, Optional
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from planner.models import _require_tz
 
@@ -28,6 +28,18 @@ TaskType = Literal[
 ]
 TaskStatus = Literal["active", "completed", "archived"]
 BlockSource = Literal["ai", "local_auto", "manual"]
+
+Language = Literal["zh-CN", "en-US"]
+AiMode = Literal["manual", "api"]
+ProviderName = Literal["openai", "deepseek", "claude"]
+
+# Preset API base URLs; model names are user-editable so a new model version
+# never requires a code change. Defaults are sensible starting points only.
+DEFAULT_PROVIDER_CONFIGS: dict[str, dict[str, str]] = {
+    "openai": {"baseUrl": "https://api.openai.com/v1", "model": "gpt-4o"},
+    "deepseek": {"baseUrl": "https://api.deepseek.com", "model": "deepseek-chat"},
+    "claude": {"baseUrl": "https://api.anthropic.com", "model": "claude-3-5-sonnet-latest"},
+}
 
 
 class WebModel(BaseModel):
@@ -148,8 +160,32 @@ class FixedEvent(WebModel):
     endAt: datetime
 
 
+class ProviderConfig(WebModel):
+    baseUrl: str
+    model: str = ""
+
+
+def _default_providers() -> dict[str, ProviderConfig]:
+    return {
+        name: ProviderConfig(**cfg) for name, cfg in DEFAULT_PROVIDER_CONFIGS.items()
+    }
+
+
 class Settings(WebModel):
     dailyMaxPlannedHours: int = Field(gt=0, le=24)
+    language: Language = "zh-CN"
+    aiMode: AiMode = "manual"
+    activeProvider: ProviderName = "openai"
+    providers: dict[str, ProviderConfig] = Field(default_factory=_default_providers)
+
+    @model_validator(mode="after")
+    def _ensure_all_providers(self) -> "Settings":
+        # Old settings (and partial PUTs) get every provider filled with its
+        # preset defaults so the rest of the code can assume all three exist.
+        merged = _default_providers()
+        merged.update(self.providers)
+        self.providers = merged
+        return self
 
 
 class ScheduleWarning(WebModel):

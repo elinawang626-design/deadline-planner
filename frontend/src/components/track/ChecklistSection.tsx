@@ -7,8 +7,10 @@ import {
   updateChecklistItem,
 } from '../../api/track'
 import { useUI } from '../../store/ui'
+import { useT } from '../../i18n'
 
 export function ChecklistSection({ taskId }: { taskId: string }) {
+  const t = useT()
   const queryClient = useQueryClient()
   const pushToast = useUI((s) => s.pushToast)
   const [title, setTitle] = useState('')
@@ -22,7 +24,7 @@ export function ChecklistSection({ taskId }: { taskId: string }) {
     queryClient.invalidateQueries({ queryKey: ['tracking-summary'] })
   }
   const onError = (error: unknown) =>
-    pushToast('error', error instanceof Error ? error.message : '操作失败')
+    pushToast('error', error instanceof Error ? error.message : t('common.opFailed'))
 
   const create = useMutation({
     mutationFn: (value: string) => createChecklistItem(taskId, value),
@@ -49,7 +51,7 @@ export function ChecklistSection({ taskId }: { taskId: string }) {
   return (
     <section className="rounded-lg border border-gray-200 bg-white p-4">
       <h3 className="mb-3 flex items-center gap-2 text-sm font-semibold">
-        检查项
+        {t('checklist.title')}
         {items.length > 0 && (
           <span className="text-xs font-normal text-gray-500">
             {done}/{items.length}（{Math.round((done / items.length) * 100)}%）
@@ -57,7 +59,7 @@ export function ChecklistSection({ taskId }: { taskId: string }) {
         )}
       </h3>
       {items.length === 0 && (
-        <p className="mb-2 text-xs text-gray-400">还没有检查项；任务进度将按检查项完成数自动计算。</p>
+        <p className="mb-2 text-xs text-gray-400">{t('checklist.empty')}</p>
       )}
       <ul className="flex flex-col gap-1.5">
         {items.map((item) => (
@@ -74,7 +76,7 @@ export function ChecklistSection({ taskId }: { taskId: string }) {
               onClick={() => remove.mutate(item.id)}
               className="ml-auto text-xs text-red-500 hover:underline"
             >
-              删除
+              {t('common.delete')}
             </button>
           </li>
         ))}
@@ -89,7 +91,7 @@ export function ChecklistSection({ taskId }: { taskId: string }) {
         <input
           value={title}
           onChange={(e) => setTitle(e.target.value)}
-          placeholder="新增检查项…"
+          placeholder={t('checklist.placeholder')}
           className="flex-1 rounded-md border border-gray-300 px-2 py-1 text-sm"
         />
         <button
@@ -97,7 +99,7 @@ export function ChecklistSection({ taskId }: { taskId: string }) {
           disabled={!title.trim() || create.isPending}
           className="rounded-md bg-blue-600 px-3 py-1 text-sm text-white hover:bg-blue-700 disabled:opacity-50"
         >
-          添加
+          {t('common.add')}
         </button>
       </form>
     </section>

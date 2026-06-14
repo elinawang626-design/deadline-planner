@@ -4,8 +4,10 @@ import { format } from 'date-fns'
 import { createWorkLog, deleteWorkLog, listWorkLogs } from '../../api/track'
 import { useUI } from '../../store/ui'
 import { fmtMinutes } from '../../lib/labels'
+import { useT } from '../../i18n'
 
 export function WorkLogSection({ taskId }: { taskId: string }) {
+  const t = useT()
   const queryClient = useQueryClient()
   const pushToast = useUI((s) => s.pushToast)
   const [workedAt, setWorkedAt] = useState(format(new Date(), 'yyyy-MM-dd'))
@@ -24,7 +26,7 @@ export function WorkLogSection({ taskId }: { taskId: string }) {
     queryClient.invalidateQueries({ queryKey: ['tracking-summary'] })
   }
   const onError = (error: unknown) =>
-    pushToast('error', error instanceof Error ? error.message : '操作失败')
+    pushToast('error', error instanceof Error ? error.message : t('common.opFailed'))
 
   const create = useMutation({
     mutationFn: () =>
@@ -55,9 +57,9 @@ export function WorkLogSection({ taskId }: { taskId: string }) {
   return (
     <section className="rounded-lg border border-gray-200 bg-white p-4">
       <h3 className="mb-3 flex items-center gap-2 text-sm font-semibold">
-        工作记录
+        {t('workLog.title')}
         <span className="text-xs font-normal text-gray-500">
-          实际投入 {fmtMinutes(total)}（仅统计工作记录，不含已排日程）
+          {t('workLog.actualNote', { value: fmtMinutes(total) })}
         </span>
       </h3>
       <ul className="flex flex-col gap-2">
@@ -70,12 +72,12 @@ export function WorkLogSection({ taskId }: { taskId: string }) {
                 onClick={() => remove.mutate(log.id)}
                 className="ml-auto text-red-500 hover:underline"
               >
-                删除
+                {t('common.delete')}
               </button>
             </div>
             <p className="mt-1">{log.summary}</p>
-            {log.challenge && <p className="mt-0.5 text-gray-500">困难：{log.challenge}</p>}
-            {log.result && <p className="mt-0.5 text-gray-500">结果：{log.result}</p>}
+            {log.challenge && <p className="mt-0.5 text-gray-500">{t('workLog.challenge', { text: log.challenge })}</p>}
+            {log.result && <p className="mt-0.5 text-gray-500">{t('workLog.result', { text: log.result })}</p>}
           </li>
         ))}
       </ul>
@@ -99,26 +101,26 @@ export function WorkLogSection({ taskId }: { taskId: string }) {
             value={minutes}
             onChange={(e) => setMinutes(e.target.value)}
             className="w-24 rounded-md border border-gray-300 px-2 py-1 text-sm"
-            placeholder="分钟"
+            placeholder={t('workLog.minutes')}
           />
-          <span className="self-center text-xs text-gray-400">分钟</span>
+          <span className="self-center text-xs text-gray-400">{t('workLog.minutes')}</span>
         </div>
         <input
           value={summary}
           onChange={(e) => setSummary(e.target.value)}
-          placeholder="做了什么（必填）"
+          placeholder={t('workLog.summaryPlaceholder')}
           className="rounded-md border border-gray-300 px-2 py-1 text-sm"
         />
         <input
           value={challenge}
           onChange={(e) => setChallenge(e.target.value)}
-          placeholder="遇到的困难（可选）"
+          placeholder={t('workLog.challengePlaceholder')}
           className="rounded-md border border-gray-300 px-2 py-1 text-sm"
         />
         <input
           value={result}
           onChange={(e) => setResult(e.target.value)}
-          placeholder="结果（可选）"
+          placeholder={t('workLog.resultPlaceholder')}
           className="rounded-md border border-gray-300 px-2 py-1 text-sm"
         />
         <button
@@ -126,7 +128,7 @@ export function WorkLogSection({ taskId }: { taskId: string }) {
           disabled={!canSubmit || create.isPending}
           className="self-start rounded-md bg-blue-600 px-3 py-1 text-sm text-white hover:bg-blue-700 disabled:opacity-50"
         >
-          记录投入
+          {t('workLog.submit')}
         </button>
       </form>
     </section>

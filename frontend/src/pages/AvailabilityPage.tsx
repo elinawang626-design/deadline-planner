@@ -9,12 +9,14 @@ import {
   updateAvailability,
 } from '../api/availability'
 import { useUI } from '../store/ui'
+import { useT } from '../i18n'
 import { WEEKDAY_LABELS, WEEKDAY_ORDER } from '../lib/labels'
-import type { AvailabilityWindow } from '../types'
+import { DEFAULT_SETTINGS, toSettings, type AvailabilityWindow } from '../types'
 
 const timeCls = 'rounded-md border border-gray-300 px-1 py-0.5 text-sm'
 
 function AddWindow({ onAdd }: { onAdd: (start: string, end: string) => void }) {
+  const t = useT()
   const [start, setStart] = useState('19:00')
   const [end, setEnd] = useState('22:00')
   return (
@@ -28,13 +30,14 @@ function AddWindow({ onAdd }: { onAdd: (start: string, end: string) => void }) {
         }}
         className="rounded-md border border-gray-300 px-2 py-0.5 hover:bg-gray-50"
       >
-        ＋ 添加
+        {t('avail.add')}
       </button>
     </span>
   )
 }
 
 export default function AvailabilityPage() {
+  const t = useT()
   const queryClient = useQueryClient()
   const pushToast = useUI((s) => s.pushToast)
   const { data: windows = [] } = useQuery({ queryKey: ['availability'], queryFn: listAvailability })
@@ -55,27 +58,28 @@ export default function AvailabilityPage() {
   })
   const remove = useMutation({ mutationFn: deleteAvailability, onSuccess: invalidate })
   const saveMax = useMutation({
-    mutationFn: () => saveSettings({ dailyMaxPlannedHours: Number(maxHours) || 6 }),
+    mutationFn: () => {
+      const base = settings ? toSettings(settings) : DEFAULT_SETTINGS
+      return saveSettings({ ...base, dailyMaxPlannedHours: Number(maxHours) || 6 })
+    },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['settings'] })
-      pushToast('success', '设置已保存')
+      pushToast('success', t('settings.saved'))
     },
   })
 
   const copyDay = (from: number, to: number) => {
     const source = windows.filter((w) => w.weekday === from)
     source.forEach((w) => create.mutate({ weekday: to, startTime: w.startTime, endTime: w.endTime }))
-    pushToast('success', `已复制 ${WEEKDAY_LABELS[from]} 的可用时间到 ${WEEKDAY_LABELS[to]}`)
+    pushToast('success', t('avail.copied', { from: WEEKDAY_LABELS[from], to: WEEKDAY_LABELS[to] }))
   }
 
   return (
     <div className="mx-auto max-w-3xl">
-      <h2 className="mb-1 text-lg font-semibold">可用时间</h2>
-      <p className="mb-4 text-sm text-gray-500">
-        未配置任何窗口时，调度器默认每天 09:00–17:00 可用。修改后请点击右上角「重新生成日程」。
-      </p>
+      <h2 className="mb-1 text-lg font-semibold">{t('avail.title')}</h2>
+      <p className="mb-4 text-sm text-gray-500">{t('avail.intro')}</p>
       <div className="mb-6 flex items-center gap-2 rounded-lg border border-gray-200 bg-white p-3">
-        <label htmlFor="max-hours" className="text-sm">每日最大计划小时数</label>
+        <label htmlFor="max-hours" className="text-sm">{t('avail.maxHours')}</label>
         <input
           id="max-hours"
           type="number"
@@ -89,7 +93,7 @@ export default function AvailabilityPage() {
           onClick={() => saveMax.mutate()}
           className="rounded-md bg-blue-600 px-3 py-1 text-sm text-white hover:bg-blue-700"
         >
-          保存
+          {t('common.save')}
         </button>
       </div>
       <div className="flex flex-col gap-3">
@@ -111,7 +115,7 @@ export default function AvailabilityPage() {
                         if (e.target.value !== '') copyDay(weekday, Number(e.target.value))
                       }}
                     >
-                      <option value="">复制到…</option>
+                      <option value="">{t('avail.copyTo')}</option>
                       {WEEKDAY_ORDER.filter((d) => d !== weekday).map((d) => (
                         <option key={d} value={d}>{WEEKDAY_LABELS[d]}</option>
                       ))}
@@ -120,7 +124,7 @@ export default function AvailabilityPage() {
                 </div>
               </div>
               {dayWindows.length === 0 ? (
-                <p className="text-xs text-gray-400">使用默认 09:00–17:00</p>
+                <p className="text-xs text-gray-400">{t('avail.useDefault')}</p>
               ) : (
                 dayWindows.map((w) => (
                   <div key={w.id} className="mb-1 flex items-center gap-2 text-sm">
@@ -146,7 +150,7 @@ export default function AvailabilityPage() {
                       className={timeCls}
                     />
                     <button onClick={() => remove.mutate(w.id)} className="text-xs text-red-600 hover:underline">
-                      删除
+                      {t('common.delete')}
                     </button>
                   </div>
                 ))

@@ -1,6 +1,20 @@
 import { USE_MOCK, apiFetch } from './client'
-import { generatePlanPromptMock, importPlanMock, validatePlanOutputMock } from './mock'
-import type { PlanImportResult, PlanMode, PlanPreview } from '../types'
+import {
+  deleteProviderKey as deleteProviderKeyMock,
+  generatePlanPromptMock,
+  importPlanMock,
+  runPlan as runPlanMock,
+  saveProviderKey as saveProviderKeyMock,
+  testProviderKey as testProviderKeyMock,
+  validatePlanOutputMock,
+} from './mock'
+import type {
+  PlanImportResult,
+  PlanMode,
+  PlanPreview,
+  ProviderName,
+  RunResult,
+} from '../types'
 
 function backendErrors(error: unknown): string[] {
   // backend returns 409/422 with {"detail": {"errors": [...]}}
@@ -67,6 +81,48 @@ export async function importPlan(
       method: 'POST',
       body: JSON.stringify({ text, mode, previewVersion, acceptedChangeIds }),
     })
+  } catch (error: unknown) {
+    throw new Error(backendErrors(error).join('；'), { cause: error })
+  }
+}
+
+export async function runPlan(mode: PlanMode, requirements: string): Promise<RunResult> {
+  if (USE_MOCK) return runPlanMock()
+  try {
+    return await apiFetch<RunResult>('/ai-import/run', {
+      method: 'POST',
+      body: JSON.stringify({ mode, requirements }),
+    })
+  } catch (error: unknown) {
+    throw new Error(backendErrors(error).join('；'), { cause: error })
+  }
+}
+
+export function saveProviderKey(
+  provider: ProviderName,
+  key: string,
+): Promise<{ configured: Record<ProviderName, boolean> }> {
+  if (USE_MOCK) return saveProviderKeyMock(provider).then((configured) => ({ configured }))
+  return apiFetch(`/ai-import/keys/${provider}`, {
+    method: 'PUT',
+    body: JSON.stringify({ key }),
+  })
+}
+
+export function deleteProviderKey(
+  provider: ProviderName,
+): Promise<{ configured: Record<ProviderName, boolean> }> {
+  if (USE_MOCK) return deleteProviderKeyMock(provider).then((configured) => ({ configured }))
+  return apiFetch(`/ai-import/keys/${provider}`, { method: 'DELETE' })
+}
+
+export async function testProviderKey(provider: ProviderName): Promise<void> {
+  if (USE_MOCK) {
+    await testProviderKeyMock()
+    return
+  }
+  try {
+    await apiFetch(`/ai-import/keys/${provider}/test`, { method: 'POST' })
   } catch (error: unknown) {
     throw new Error(backendErrors(error).join('；'), { cause: error })
   }

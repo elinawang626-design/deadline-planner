@@ -1,6 +1,6 @@
 import { USE_MOCK, apiFetch } from './client'
 import * as mock from './mock'
-import type { AvailabilityWindow, Settings } from '../types'
+import type { AvailabilityWindow, Settings, SettingsResponse } from '../types'
 
 export function listAvailability(): Promise<AvailabilityWindow[]> {
   if (USE_MOCK) return mock.listAvailability()
@@ -30,13 +30,12 @@ export function deleteAvailability(id: string): Promise<void> {
   return apiFetch(`/availability/${id}`, { method: 'DELETE' })
 }
 
-export function getSettings(): Promise<Settings> {
+export function getSettings(): Promise<SettingsResponse> {
   if (USE_MOCK) return mock.getSettings()
-  return apiFetch('/settings') // TODO(backend): GET /api/settings
+  return apiFetch('/settings')
 }
 
-export function saveSettings(settings: Settings): Promise<Settings> {
+export function saveSettings(settings: Settings): Promise<SettingsResponse> {
   if (USE_MOCK) return mock.saveSettings(settings)
-  // TODO(backend): PUT /api/settings
   return apiFetch('/settings', { method: 'PUT', body: JSON.stringify(settings) })
 }

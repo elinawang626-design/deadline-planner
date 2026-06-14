@@ -17,7 +17,7 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import Field
 
-from planner import ai_plan
+from planner import ai_plan, apikeys, providers
 from planner.ai_plan import KeptBlock, PlanChange, PlanMode, PlanRejected, WebState
 from planner.engine import MAX_HORIZON_DAYS, EngineTask
 from planner.engine import schedule as engine_schedule
@@ -79,6 +79,27 @@ class ImportResponse(WebModel):
     applied: int
     rejected: int
     scheduleSummary: Optional[ScheduleSummary] = None
+
+
+class RunBody(WebModel):
+    mode: PlanMode
+    requirements: str = ""
+
+
+class RunResponse(PlanPreviewResponse):
+    # The raw standard JSON the provider returned, re-used verbatim when the
+    # user confirms the import. The preview itself never writes to the database.
+    rawOutput: str = ""
+
+
+class KeyBody(WebModel):
+    key: str
+
+
+class SettingsResponse(Settings):
+    # Augments the persisted settings with per-provider key presence. The key
+    # values themselves are never returned, logged or stored in SQLite.
+    configured: dict[str, bool] = Field(default_factory=dict)
 
 
 # ---- storage (shared helpers in planner.webdb) ----
@@ -665,26 +686,31 @@ def delete_availability(window_id: str) -> None:
         conn.close()
 
 
+def _settings_with_configured(settings: Settings) -> SettingsResponse:
+    return SettingsResponse(**settings.model_dump(), configured=apikeys.configured())
+
+
 @app.get("/api/settings")
-def get_settings() -> Settings:
+def get_settings() -> SettingsResponse:
     conn = _connect()
     try:
-        return _get(conn, "web_settings", Settings, "settings") or Settings(
+        settings = _get(conn, "web_settings", Settings, "settings") or Settings(
             dailyMaxPlannedHours=DEFAULT_MAX_PLANNED_HOURS
         )
     finally:
         conn.close()
+    return _settings_with_configured(settings)
 
 
 @app.put("/api/settings")
-def put_settings(body: Settings) -> Settings:
+def put_settings(body: Settings) -> SettingsResponse:
     conn = _connect()
     try:
         with conn:
             _upsert(conn, "web_settings", "settings", body.model_dump_json())
-        return body
     finally:
         conn.close()
+    return _settings_with_configured(body)
 
 
 def _load_state(conn: sqlite3.Connection) -> WebState:
@@ -713,7 +739,102 @@ def generate_prompt(body: GeneratePromptBody) -> dict:
         state = _load_state(conn)
     finally:
         conn.close()
-    return {"prompt": ai_plan.build_plan_prompt(body.mode, body.requirements, state, now)}
+    return {
+        "prompt": ai_plan.build_plan_prompt(
+            body.mode, body.requirements, state, now, state.settings.language
+        )
+    }
+
+
+def _provider_or_400(provider: str) -> None:
+    if provider not in apikeys.PROVIDERS:
+        raise HTTPException(404, f"unknown provider {provider}")
+
+
+@app.put("/api/ai-import/keys/{provider}")
+def save_key(provider: str, body: KeyBody) -> dict:
+    _provider_or_400(provider)
+    if not body.key.strip():
+        raise HTTPException(422, "key must not be empty")
+    apikeys.set_key(provider, body.key.strip())
+    return {"configured": apikeys.configured()}
+
+
+@app.delete("/api/ai-import/keys/{provider}")
+def remove_key(provider: str) -> dict:
+    _provider_or_400(provider)
+    apikeys.delete_key(provider)
+    return {"configured": apikeys.configured()}
+
+
+@app.post("/api/ai-import/keys/{provider}/test")
+def test_key(provider: str) -> dict:
+    _provider_or_400(provider)
+    conn = _connect()
+    try:
+        state = _load_state(conn)
+    finally:
+        conn.close()
+    cfg = state.settings.providers[provider]
+    key = apikeys.get_key(provider)
+    if not key:
+        raise HTTPException(400, detail={"errors": ["未配置 API Key"], "kind": "auth"})
+    try:
+        providers.test_connection(
+            provider, base_url=cfg.baseUrl, model=cfg.model, api_key=key
+        )
+    except providers.ProviderError as exc:
+        raise HTTPException(502, detail={"errors": [str(exc)], "kind": exc.kind})
+    return {"ok": True}
+
+
+@app.post("/api/ai-import/run")
+def run_ai_import(body: RunBody) -> RunResponse:
+    """Call the active provider and build a preview. Never writes to the DB."""
+    now = datetime.now().astimezone()
+    conn = _connect()
+    try:
+        state = _load_state(conn)
+    finally:
+        conn.close()
+    settings = state.settings
+    provider = settings.activeProvider
+    cfg = settings.providers[provider]
+    key = apikeys.get_key(provider)
+    if not key:
+        raise HTTPException(
+            400, detail={"errors": [f"未配置 {provider} 的 API Key"], "kind": "auth"}
+        )
+    prompt = ai_plan.build_plan_prompt(
+        body.mode, body.requirements, state, now, settings.language
+    )
+    try:
+        raw = providers.call_provider(
+            provider,
+            base_url=cfg.baseUrl,
+            model=cfg.model,
+            api_key=key,
+            prompt=prompt,
+            schema=ai_plan.AiPlan.model_json_schema(),
+            language=settings.language,
+        )
+    except providers.ProviderError as exc:
+        raise HTTPException(502, detail={"errors": [str(exc)], "kind": exc.kind})
+
+    plan = _extract_or_422(raw)
+    scenario = ai_plan.build_scenario(state, plan, body.mode, now)
+    return RunResponse(
+        ok=not scenario.errors,
+        errors=scenario.errors,
+        warnings=scenario.warnings,
+        previewVersion=ai_plan.state_version(state),
+        summary=ai_plan.change_summary(scenario),
+        changes=scenario.changes,
+        keptBlocks=scenario.kept_blocks,
+        plan=plan.model_dump(mode="json", exclude_unset=True),
+        useLocalScheduler=scenario.use_local_scheduler,
+        rawOutput=raw,
+    )
 
 
 @app.post("/api/ai-import/validate-output")

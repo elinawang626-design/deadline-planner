@@ -4,6 +4,7 @@ import { format, parseISO } from 'date-fns'
 import { listTasks } from '../api/tasks'
 import { listChecklist, listEstimates, listWorkLogs } from '../api/track'
 import { PRIORITY_LABELS, STATUS_LABELS, TYPE_LABELS, fmtMinutes, priorityColor } from '../lib/labels'
+import { useT } from '../i18n'
 import { ChecklistSection } from '../components/track/ChecklistSection'
 import { WorkLogSection } from '../components/track/WorkLogSection'
 import { AttachmentSection } from '../components/track/AttachmentSection'
@@ -11,6 +12,7 @@ import { EstimateSection } from '../components/track/EstimateSection'
 import { CareerSection } from '../components/track/CareerSection'
 
 export default function TaskDetailPage() {
+  const t = useT()
   const { taskId = '' } = useParams()
   const { data: tasks = [], isLoading } = useQuery({ queryKey: ['tasks'], queryFn: listTasks })
   const task = tasks.find((t) => t.id === taskId)
@@ -31,13 +33,13 @@ export default function TaskDetailPage() {
     enabled: !!task,
   })
 
-  if (isLoading) return <p className="text-sm text-gray-400">加载中…</p>
+  if (isLoading) return <p className="text-sm text-gray-400">{t('common.loading')}</p>
   if (!task) {
     return (
       <div className="mx-auto max-w-3xl">
-        <p className="text-sm text-gray-500">任务不存在或已删除。</p>
+        <p className="text-sm text-gray-500">{t('taskDetail.notFound')}</p>
         <Link to="/tasks" className="text-sm text-blue-600 hover:underline">
-          ← 返回任务列表
+          {t('taskDetail.back')}
         </Link>
       </div>
     )
@@ -54,7 +56,7 @@ export default function TaskDetailPage() {
     <div className="mx-auto flex max-w-3xl flex-col gap-4">
       <div>
         <Link to="/tasks" className="text-xs text-blue-600 hover:underline">
-          ← 返回任务列表
+          {t('taskDetail.back')}
         </Link>
         <div className="mt-2 flex flex-wrap items-center gap-2">
           <span className={`rounded border px-1.5 py-0.5 text-xs ${priorityColor[task.priority]}`}>
@@ -67,19 +69,19 @@ export default function TaskDetailPage() {
         {task.description && <p className="mt-1 text-sm text-gray-600">{task.description}</p>}
         <p className={`mt-1 text-xs ${overdue ? 'font-medium text-red-600' : 'text-gray-500'}`}>
           {task.deadline
-            ? `截止 ${format(parseISO(task.deadline), 'yyyy/M/d HH:mm')}`
-            : '无截止日期（不参与自动排程）'}
-          {overdue && '（已逾期）'}
+            ? t('taskDetail.deadline', { time: format(parseISO(task.deadline), 'yyyy/M/d HH:mm') })
+            : t('taskDetail.noDeadline')}
+          {overdue && t('taskDetail.overdueTag')}
         </p>
       </div>
 
       <section className="grid grid-cols-2 gap-3 rounded-lg border border-gray-200 bg-white p-4 text-sm sm:grid-cols-4">
         <div>
-          <p className="text-xs text-gray-400">当前预计</p>
+          <p className="text-xs text-gray-400">{t('taskDetail.currentEstimate')}</p>
           <p className="font-medium">{fmtMinutes(task.estimatedMinutes)}</p>
         </div>
         <div>
-          <p className="text-xs text-gray-400">AI 估时区间</p>
+          <p className="text-xs text-gray-400">{t('taskDetail.aiRange')}</p>
           <p className="font-medium">
             {latestEstimate
               ? `${fmtMinutes(latestEstimate.optimisticMinutes)} ~ ${fmtMinutes(latestEstimate.pessimisticMinutes)}`
@@ -87,12 +89,12 @@ export default function TaskDetailPage() {
           </p>
         </div>
         <div>
-          <p className="text-xs text-gray-400">实际投入</p>
+          <p className="text-xs text-gray-400">{t('taskDetail.actual')}</p>
           <p className="font-medium">{fmtMinutes(actual)}</p>
         </div>
         <div>
           <p className="text-xs text-gray-400">
-            {checklist.length > 0 ? '检查项进度' : '预计剩余'}
+            {checklist.length > 0 ? t('taskDetail.checklistProgress') : t('taskDetail.estimatedRemaining')}
           </p>
           <p className="font-medium">
             {checklist.length > 0

@@ -8,17 +8,12 @@ import {
   patchCareerCard,
 } from '../../api/track'
 import { useUI } from '../../store/ui'
+import { useT } from '../../i18n'
 import type { CareerCard, Task } from '../../types'
 
-const LIST_FIELDS = [
-  ['actions', '关键行动'],
-  ['challenges', '难点'],
-  ['outcomes', '解决方法与结果'],
-  ['metrics', '可量化指标'],
-  ['skills', '使用技能'],
-] as const
+const LIST_FIELDS = ['actions', 'challenges', 'outcomes', 'metrics', 'skills'] as const
 
-type ListField = (typeof LIST_FIELDS)[number][0]
+type ListField = (typeof LIST_FIELDS)[number]
 
 function CardEditor({
   taskId,
@@ -27,6 +22,7 @@ function CardEditor({
   taskId: string
   card: CareerCard
 }) {
+  const t = useT()
   const queryClient = useQueryClient()
   const pushToast = useUI((s) => s.pushToast)
   const [editing, setEditing] = useState(false)
@@ -57,26 +53,26 @@ function CardEditor({
     onSuccess: () => {
       setEditing(false)
       queryClient.invalidateQueries({ queryKey: ['career-card', taskId] })
-      pushToast('success', '素材卡已更新')
+      pushToast('success', t('career.cardUpdated'))
     },
     onError: (error: unknown) =>
-      pushToast('error', error instanceof Error ? error.message : '保存失败'),
+      pushToast('error', error instanceof Error ? error.message : t('common.saveFailed')),
   })
 
   if (!editing) {
     return (
       <div className="flex flex-col gap-2 text-xs text-gray-700">
         <p>
-          <span className="font-semibold">背景：</span>
+          <span className="font-semibold">{t('career.context')}{t('common.colon')}</span>
           {card.context}
         </p>
         <p>
-          <span className="font-semibold">个人角色：</span>
+          <span className="font-semibold">{t('career.role')}{t('common.colon')}</span>
           {card.role}
         </p>
-        {LIST_FIELDS.map(([field, label]) => (
+        {LIST_FIELDS.map((field) => (
           <div key={field}>
-            <span className="font-semibold">{label}：</span>
+            <span className="font-semibold">{t(`career.field.${field}`)}{t('common.colon')}</span>
             {card[field].length ? (
               <ul className="ml-4 list-disc">
                 {card[field].map((item, index) => (
@@ -84,7 +80,7 @@ function CardEditor({
                 ))}
               </ul>
             ) : (
-              <span className="text-gray-400">（无）</span>
+              <span className="text-gray-400">{t('career.empty')}</span>
             )}
           </div>
         ))}
@@ -92,7 +88,7 @@ function CardEditor({
           onClick={() => setEditing(true)}
           className="self-start text-blue-600 hover:underline"
         >
-          编辑
+          {t('common.edit')}
         </button>
       </div>
     )
@@ -100,21 +96,21 @@ function CardEditor({
 
   return (
     <div className="flex flex-col gap-2 text-xs">
-      <label className="font-semibold">背景</label>
+      <label className="font-semibold">{t('career.context')}</label>
       <textarea
         value={context}
         onChange={(e) => setContext(e.target.value)}
         className="rounded-md border border-gray-300 p-2"
       />
-      <label className="font-semibold">个人角色</label>
+      <label className="font-semibold">{t('career.role')}</label>
       <textarea
         value={role}
         onChange={(e) => setRole(e.target.value)}
         className="rounded-md border border-gray-300 p-2"
       />
-      {LIST_FIELDS.map(([field, label]) => (
+      {LIST_FIELDS.map((field) => (
         <div key={field} className="flex flex-col gap-1">
-          <label className="font-semibold">{label}（每行一条）</label>
+          <label className="font-semibold">{t(`career.field.${field}`)}{t('career.perLine')}</label>
           <textarea
             value={lists[field]}
             onChange={(e) => setLists({ ...lists, [field]: e.target.value })}
@@ -128,10 +124,10 @@ function CardEditor({
           disabled={save.isPending || !context.trim() || !role.trim()}
           className="rounded-md bg-blue-600 px-3 py-1 text-white hover:bg-blue-700 disabled:opacity-50"
         >
-          保存
+          {t('common.save')}
         </button>
         <button onClick={() => setEditing(false)} className="text-gray-500 hover:underline">
-          取消
+          {t('common.cancel')}
         </button>
       </div>
     </div>
@@ -139,6 +135,7 @@ function CardEditor({
 }
 
 export function CareerSection({ task }: { task: Task }) {
+  const t = useT()
   const queryClient = useQueryClient()
   const pushToast = useUI((s) => s.pushToast)
   const [confirmedMetrics, setConfirmedMetrics] = useState('')
@@ -151,7 +148,7 @@ export function CareerSection({ task }: { task: Task }) {
   })
 
   const onError = (error: unknown) =>
-    pushToast('error', error instanceof Error ? error.message : '操作失败')
+    pushToast('error', error instanceof Error ? error.message : t('common.opFailed'))
 
   const generate = useMutation({
     mutationFn: () => careerPrompt(task.id, confirmedMetrics),
@@ -163,7 +160,7 @@ export function CareerSection({ task }: { task: Task }) {
     onSuccess: () => {
       setReply('')
       queryClient.invalidateQueries({ queryKey: ['career-card', task.id] })
-      pushToast('success', '职业素材卡已保存')
+      pushToast('success', t('career.cardSaved'))
     },
     onError,
   })
@@ -174,7 +171,7 @@ export function CareerSection({ task }: { task: Task }) {
       const url = URL.createObjectURL(blob)
       const anchor = document.createElement('a')
       anchor.href = url
-      anchor.download = `${task.title}-职业素材卡.md`
+      anchor.download = `${task.title}-${t('career.fileSuffix')}.md`
       anchor.click()
       URL.revokeObjectURL(url)
     },
@@ -183,15 +180,15 @@ export function CareerSection({ task }: { task: Task }) {
 
   return (
     <section className="rounded-lg border border-gray-200 bg-white p-4">
-      <h3 className="mb-3 text-sm font-semibold">职业素材卡</h3>
+      <h3 className="mb-3 text-sm font-semibold">{t('career.title')}</h3>
       {task.status !== 'completed' && (
-        <p className="mb-2 text-xs text-gray-400">任务完成后生成效果最佳，也可以随时生成。</p>
+        <p className="mb-2 text-xs text-gray-400">{t('career.beforeComplete')}</p>
       )}
       <div className="flex flex-col gap-2">
         <input
           value={confirmedMetrics}
           onChange={(e) => setConfirmedMetrics(e.target.value)}
-          placeholder="你确认的可量化指标（可选，如：测试覆盖率 85%）…"
+          placeholder={t('career.metricsPlaceholder')}
           className="rounded-md border border-gray-300 px-2 py-1 text-xs"
         />
         <button
@@ -199,20 +196,20 @@ export function CareerSection({ task }: { task: Task }) {
           disabled={generate.isPending}
           className="self-start rounded-md bg-blue-600 px-3 py-1 text-sm text-white hover:bg-blue-700 disabled:opacity-50"
         >
-          {generate.isPending ? '生成中…' : '生成素材卡提示词'}
+          {generate.isPending ? t('common.generating') : t('career.generatePrompt')}
         </button>
         {prompt && (
           <div>
             <div className="mb-1 flex items-center gap-2">
-              <span className="text-xs text-gray-500">复制给任意外部 AI：</span>
+              <span className="text-xs text-gray-500">{t('common.copyToExternalAi')}</span>
               <button
                 onClick={() => {
                   navigator.clipboard.writeText(prompt)
-                  pushToast('success', '提示词已复制')
+                  pushToast('success', t('common.promptCopied'))
                 }}
                 className="text-xs text-blue-600 hover:underline"
               >
-                复制
+                {t('common.copy')}
               </button>
             </div>
             <textarea
@@ -225,7 +222,7 @@ export function CareerSection({ task }: { task: Task }) {
         <textarea
           value={reply}
           onChange={(e) => setReply(e.target.value)}
-          placeholder="把外部 AI 返回的素材卡 JSON 粘贴到这里…"
+          placeholder={t('career.replyPlaceholder')}
           className="h-24 w-full rounded-md border border-gray-300 p-2 font-mono text-xs"
         />
         <button
@@ -233,19 +230,19 @@ export function CareerSection({ task }: { task: Task }) {
           disabled={!reply.trim() || doImport.isPending}
           className="self-start rounded-md bg-gray-700 px-3 py-1 text-sm text-white hover:bg-gray-800 disabled:opacity-50"
         >
-          校验并保存素材卡
+          {t('career.validateSave')}
         </button>
       </div>
 
       {card && (
         <div className="mt-4 rounded-md bg-gray-50 p-3">
           <div className="mb-2 flex items-center gap-2">
-            <h4 className="text-xs font-semibold text-gray-600">当前素材卡</h4>
+            <h4 className="text-xs font-semibold text-gray-600">{t('career.currentCard')}</h4>
             <button
               onClick={() => exportMd.mutate()}
               className="ml-auto text-xs text-blue-600 hover:underline"
             >
-              导出 Markdown
+              {t('career.exportMd')}
             </button>
           </div>
           <CardEditor key={card.updatedAt} taskId={task.id} card={card} />
